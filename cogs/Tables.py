@@ -12,7 +12,7 @@ import aiohttp
 import json
 import random
 
-from constants import (channels, ranks, bot_channels, SH_KEY, LOOKUP_KEY)
+from constants import (channels, ranks, bot_channels, num_players, SH_KEY, LOOKUP_KEY)
 
 def get_creds():
     return ServiceAccountCredentials.from_json_keyfile_name(
@@ -68,12 +68,12 @@ class Tables(commands.Cog):
             #scores.append(int(newline[len(newline)-1]))
             gps = newline[len(newline)-1]
             scores.append(sumGps(gps))
-        if len(players) != 12:
-            await ctx.send("Your table does not contain 12 valid score lines, try again!")
+        if len(players) != num_players:
+            await ctx.send(f"Your table does not contain {num_players} valid score lines, try again!")
             return
         msg = "`!submit table <size> <tier> "
         playerScoreStrings = []
-        for i in range(12):
+        for i in range(num_players):
             playerScoreStrings.append("%s, %d" % (players[i], scores[i]))
         msg += ", ".join(playerScoreStrings)
         msg += "`"
@@ -219,17 +219,17 @@ class Tables(commands.Cog):
             return
         
         arguments = args.split(",")
-        if len(arguments) != 24:
+        if len(arguments) != num_players * 2:
             if len(arguments) % 2 == 0:
                 ns = "names"
             else:
                 ns = "scores"
-            await ctx.send("There must be exactly 12 players and 12 scores for each table, but you typed %d %s"
+            await ctx.send(f"There must be exactly {num_players} players and {num_players} scores for each table, but you typed {int(len(arguments)/2)} {ns}"
                            % (int(len(arguments)/2), ns))
             return
         names = []
         scores = []
-        for i in range(12):
+        for i in range(num_players):
             names.append(arguments[2*i].strip())
             try:
                 scores.append(int(arguments[2*i+1].strip()))
@@ -237,12 +237,12 @@ class Tables(commands.Cog):
                 await ctx.send("%s is not a valid score!" %
                                (arguments[2*i+1].strip()))
                 return
-        is984 = sum(scores)
+        is300 = sum(scores)
 
         teamscores = []
         teamnames = []
         teamplayerscores = []
-        for i in range(int(12/size)):
+        for i in range(int(num_players/size)):
             teamscore = 0
             tnames = []
             pscores = []
@@ -254,7 +254,7 @@ class Tables(commands.Cog):
             teamnames.append(tnames)
             teamplayerscores.append(pscores)
 
-        sortedScoresTeams = sorted(zip(teamscores, teamnames, teamplayerscores), reverse=True)
+        sortedScoresTeams = sorted(zip(teamscores, teamnames, teamplayerscores), reverse=False)
         sortedScores = [x for x, _, _ in sortedScoresTeams]
         sortedTeams = [x for _, x, _ in sortedScoresTeams]
         sortedpScores = [x for _, _, x in sortedScoresTeams]
@@ -283,12 +283,12 @@ class Tables(commands.Cog):
 
         #gotBatch = await botSheet.batch_get(["D84:E95"])
         gotBatch = await botSheet.batch_get(["C9:C20"])
-        goodNames = [gotBatch[0][i][0] for i in range(12)]
+        goodNames = [gotBatch[0][i][0] for i in range(num_players)]
         #print(goodNames)
         #mmrs = [gotBatch[0][i][1] for i in range(12)]
 
         errors = ""
-        for i in range(12):
+        for i in range(num_players):
             if goodNames[i] == "N/A":
                 #await ctx.send("Player %s is not on the leaderboard; check your input"
                 #               % (sortedNames[i]))
@@ -308,7 +308,7 @@ class Tables(commands.Cog):
                           % (tier.upper()))
         if size == 1:
             table_text += "FFA - Free for All #4A82D0\n"
-        for i in range(int(12/size)):
+        for i in range(int(num_players/size)):
             #table_text += "Team %d - A\n" % (i+1)
             if size != 1:
                 if i % 2 == 0:
@@ -331,9 +331,9 @@ class Tables(commands.Cog):
         e = discord.Embed(title="Table")
         e.set_image(url=image_url)
         content = "Please react to this message with \U00002611 within the next 30 seconds to confirm the table is correct"
-        if is984 != 984:
-            warning = ("The total score of %d might be incorrect! Most tables should add up to 984 points"
-                       % is984)
+        if is300 != 300:
+            warning = ("The total score of %d might be incorrect! Most tables should add up to 300 points"
+                       % is300)
             e.add_field(name="Warning", value=warning)
         embedded = await ctx.send(content=content, embed=e)
         #ballot box with check emoji
@@ -464,8 +464,8 @@ class Tables(commands.Cog):
             #scores.append(int(newline[len(newline)-1]))
             gps = newline[len(newline)-1]
             scores.append(sumGps(gps))
-        if len(names) != 12:
-            await ctx.send("Your table does not contain 12 valid score lines, try again!")
+        if len(names) != num_players:
+            await ctx.send(f"Your table does not contain {num_players} valid score lines, try again!")
             return
         if ctx.guild.id != self.config["server"]:
             await ctx.send("You cannot use this command in this server!")
@@ -487,12 +487,12 @@ class Tables(commands.Cog):
             await ctx.send("Your tier is not valid. Correct tiers are: %s"
                            % (list(channels.keys())))
             return
-        is984 = sum(scores)
+        is300 = sum(scores)
 
         teamscores = []
         teamnames = []
         teamplayerscores = []
-        for i in range(int(12/size)):
+        for i in range(int(num_players/size)):
             teamscore = 0
             tnames = []
             pscores = []
@@ -504,7 +504,7 @@ class Tables(commands.Cog):
             teamnames.append(tnames)
             teamplayerscores.append(pscores)
 
-        sortedScoresTeams = sorted(zip(teamscores, teamnames, teamplayerscores), reverse=True)
+        sortedScoresTeams = sorted(zip(teamscores, teamnames, teamplayerscores), reverse=False)
         sortedScores = [x for x, _, _ in sortedScoresTeams]
         sortedTeams = [x for _, x, _ in sortedScoresTeams]
         sortedpScores = [x for _, _, x in sortedScoresTeams]
@@ -533,12 +533,12 @@ class Tables(commands.Cog):
 
         #gotBatch = await botSheet.batch_get(["D84:E95"])
         gotBatch = await botSheet.batch_get(["C9:C20"])
-        goodNames = [gotBatch[0][i][0] for i in range(12)]
+        goodNames = [gotBatch[0][i][0] for i in range(num_players)]
         #print(goodNames)
-        #mmrs = [gotBatch[0][i][1] for i in range(12)]
+        #mmrs = [gotBatch[0][i][1] for i in range(num_players)]
 
         errors = ""
-        for i in range(12):
+        for i in range(num_players):
             if goodNames[i] == "N/A":
                 #await ctx.send("Player %s is not on the leaderboard; check your input"
                 #               % (sortedNames[i]))
@@ -558,7 +558,7 @@ class Tables(commands.Cog):
                           % (tier.upper()))
         if size == 1:
             table_text += "FFA - Free for All #4A82D0\n"
-        for i in range(int(12/size)):
+        for i in range(int(num_players/size)):
             #table_text += "Team %d - A\n" % (i+1)
             if size != 1:
                 if i % 2 == 0:
@@ -577,9 +577,9 @@ class Tables(commands.Cog):
         e = discord.Embed(title="Table")
         e.set_image(url=image_url)
         content = "Please react to this message with \U00002611 within the next 30 seconds to confirm the table is correct"
-        if is984 != 984:
-            warning = ("The total score of %d might be incorrect! Most tables should add up to 984 points"
-                       % is984)
+        if is300 != 300:
+            warning = ("The total score of %d might be incorrect! Most tables should add up to 300 points"
+                       % is300)
             e.add_field(name="Warning", value=warning)
         embedded = await ctx.send(content=content, embed=e)
         #ballot box with check emoji

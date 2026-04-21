@@ -17,7 +17,8 @@ from constants import (channels, ranks, getRank,
                        peakColumn, rowOffset, colOffset,
                        sheet_start_rows, table_start_rows,
                        rowcol_to_a1, get_strike_info,
-                       place_MMRs, pen_row, pen_cols)
+                       place_MMRs, pen_row, pen_cols,
+                       num_players)
 
 def get_creds():
     return ServiceAccountCredentials.from_json_keyfile_name(
@@ -90,7 +91,7 @@ class Updating(commands.Cog):
         arguments = extraArgs.split(";")
         instructions = {}
         if tier.upper() == "SQ":
-            for i in range(12):
+            for i in range(num_players):
                 instructions[i+1] = 0.75
                 
         #processing optional arguments to give specific players multipliers
@@ -100,21 +101,21 @@ class Updating(commands.Cog):
             except:
                 return
         mults = []
-        for i in range(12):
+        for i in range(num_players):
             if(i+1) in instructions.keys():
                 mults.append(instructions[i+1])
             else:
                 mults.append(1)
 
-        races = 12
+        races = 1
         if len(arguments) > 1:
             try:
                 raceArg = int(arguments[1])
             except:
-                await(await ctx.send("The number of races you entered is not an integer between 1-12; try again")).delete(delay=10)
+                await(await ctx.send("The number of races you entered is not 1; try again")).delete(delay=10)
                 return
-            if raceArg < 1 or raceArg > 12:
-                await(await ctx.send("The number of races you entered is not an integer between 1-12; try again")).delete(delay=10)
+            if raceArg != 1:
+                await(await ctx.send("The number of races you entered is not 1; try again")).delete(delay=10)
                 return
             races = raceArg
         #await ctx.send("%s\n%s" % (mults, races))
@@ -185,18 +186,18 @@ class Updating(commands.Cog):
             await(await ctx.send("Please enter a valid format: 1, 2, 3, 4, or 6")).delete(delay=10)
             return
         if tier.upper() not in channels.keys():
-            await(await ctx.send("Please enter a valid tier: X, S, A, B, C, D, or E")).delete(delay=10)
+            await(await ctx.send("Please enter a valid tier: X, S, A, AB, B, C, D, E or F")).delete(delay=10)
             return
         
         players = arguments[0].split(",")
         placements = arguments[1].strip().split(" ")
         names = [player.strip() for player in players]
-        if len(names) != 12:
-            await(await ctx.send("Please type exactly 12 player names")).delete(delay=10)
+        if len(names) != num_players:
+            await(await ctx.send("Please type exactly 24 player names")).delete(delay=10)
             return
-        if len(placements) != (12/size):
+        if len(placements) != (num_players/size):
             await(await ctx.send("Please type exactly %d placements after the comma"
-                           % (12/size))).delete(delay=10)
+                           % (num_players/size))).delete(delay=10)
             return
         if len(set(names)) < len(names):
             await(await ctx.send("There are duplicates in your input; try again")).delete(delay=10)
@@ -207,17 +208,17 @@ class Updating(commands.Cog):
                 intp = int(placement)
             except:
                 await(await ctx.send("Your argument %s is not a placement between 1 and %d!"
-                               % (placement, int(12/size)))).delete(delay=10)
+                               % (placement, int(num_players/size)))).delete(delay=10)
                 return
-            if int(placement) not in range(1, int(12/size)+1):
+            if int(placement) not in range(1, int(num_players/size)+1):
                 await(await ctx.send("Your argument %s is not a placement between 1 and %d!"
-                               % (placement, int(12/size)))).delete(delay=10)
+                               % (placement, int(num_players/size)))).delete(delay=10)
                 return
 
         #processing optional arguments to give specific players multipliers
         instructions = {}
         if tier.upper() == "SQ":
-            for i in range(12):
+            for i in range(num_players):
                 instructions[i+1] = 0.75
         elif len(arguments) > 2:
             try:
@@ -226,22 +227,22 @@ class Updating(commands.Cog):
                 return
             
         mults = []
-        for i in range(12):
+        for i in range(num_players):
             if(i+1) in instructions.keys():
                 mults.append(instructions[i+1])
             else:
                 mults.append(1)
         
         #processing optional race count argument
-        races = 12
+        races = 1
         if len(arguments) > 3:
             try:
                 raceArg = int(arguments[3])
             except:
-                await(await ctx.send("The number of races you entered is not an integer between 1-12; try again")).delete(delay=10)
+                await(await ctx.send("The number of races you entered is not 1; try again")).delete(delay=10)
                 return
-            if raceArg < 1 or raceArg > 12:
-                await(await ctx.send("The number of races you entered is not an integer between 1-12; try again")).delete(delay=10)
+            if raceArg != 1:
+                await(await ctx.send("The number of races you entered is not 1; try again")).delete(delay=10)
                 return
             races = raceArg
         try:
@@ -269,21 +270,21 @@ class Updating(commands.Cog):
         #player names are correct
         updateCells = [{
             'range': "%s%d:%s%d" % (updateCols[0], start,
-                                    updateCols[0], start+11),
+                                    updateCols[0], start+num_players-1),
             'values': [[name] for name in names]}, {
             'range': "%s%d:%s%d" % (updateCols[1], start,
-                                    updateCols[1], start+int(12/size)-1),
+                                    updateCols[1], start+int(num_players/size)-1),
             'values': [[int(placement)] for placement in placements]}, {
             'range': "%s%d:%s%d" % (updateCols[2], start,
-                                    updateCols[2], start+11),
+                                    updateCols[2], start+num_players-1),
             'values': [[mult] for mult in mults]}
             ]
-        updateCells.append({'range': "C%d" % (start+12),
+        updateCells.append({'range': "C%d" % (start+num_players),
                             'values': [[races]]})
         await botSheet.batch_update(updateCells)
 
         gotBatch = await botSheet.batch_get(["%s%d:%s%d" % (getCols[0], start,
-                                                            getCols[1], start+11)])
+                                                            getCols[1], start+num_players-1)])
         peakMMRs = []
         oldMMRs = []
         mmrChanges = []
@@ -291,7 +292,7 @@ class Updating(commands.Cog):
         rowNums = []
         colNums = []
         goodNames = []
-        for i in range(12):
+        for i in range(num_players):
             peakMMRs.append(gotBatch[0][i][0])
             oldMMRs.append(gotBatch[0][i][1])
             mmrChanges.append(int(gotBatch[0][i][2]))
@@ -306,7 +307,7 @@ class Updating(commands.Cog):
         updateCells = []
         peakChanges = []
         errors = ""
-        for i in range(12):
+        for i in range(num_players):
             if rowNums[i] == "#N/A" or oldMMRs[i] == "N/A":
                 #await(await ctx.send("Player %s is not on the sheet; check your input" % names[i])).delete(delay=10)
                 #await msg.delete()
@@ -330,7 +331,7 @@ class Updating(commands.Cog):
             await ctx.send(errors)
             await msg.delete()
             raise Exception()
-        for i in range(12):
+        for i in range(num_players):
             if peakMMRs[i] == "N/A":
                 if colNums[i] >= 4:
                     peakCell = {'range': "%s%d" % (peakColumn,
@@ -364,7 +365,7 @@ class Updating(commands.Cog):
             tierCell.value = "Tier %s" % tier.upper()
         else:
             tierCell.value = "Squad Queue"
-        for i in range(int(12/size)):
+        for i in range(int(num_players/size)):
             placeCell = ws["C%s" % (start+index)]
             placeCell.value = int(placements[i])
             for j in range(size):
@@ -387,7 +388,7 @@ class Updating(commands.Cog):
                 newMMRcell = ws["G%s" % (start+index)]
                 newMMRcell.value = int(newMMRs[ij])
                 index += 1
-            if size > 1 and i+1 < 12/size:
+            if size > 1 and i+1 < num_players/size:
                 index += 1
         racesCell = ws["D%s" % (start+index)]
         racesCell.value = races
@@ -402,7 +403,7 @@ class Updating(commands.Cog):
         #processing any potential rank changes
         #print("checking rank changes...")
         rankchanges = ""
-        for i in range(12):
+        for i in range(num_players):
             rank1 = getRank(int(oldMMRs[i]))
             rank2 = getRank(int(newMMRs[i]))
             if rank1 != rank2:
@@ -454,7 +455,7 @@ class Updating(commands.Cog):
         e.add_field(name="Updated by", value=ctx.author.mention)
         lossMultStr = ""
         if tier.upper() != "SQ":
-            for i in range(12):
+            for i in range(num_players):
                 if mults[i] != 1:
                     lossMultStr += ("%.2fx MMR multiplier for %s\n"
                                    % (mults[i], goodNames[i]))
@@ -506,7 +507,7 @@ class Updating(commands.Cog):
             tier = table[5]
             clearedCells = []
             #print(table)
-            for i in range(12):
+            for i in range(num_players):
                 #print(rowcol_to_a1(int(rowids[i])+rowOffset, int(colids[i])+colOffset))
                 clearCell = {'range': rowcol_to_a1(int(rowids[i])+rowOffset, int(colids[i])+colOffset),
                              'values': [['']]}

@@ -1,8 +1,8 @@
 #ID of your updating spreadsheet, can be found by copying
 #the part after /d/ in the sheet link
-SH_KEY = '1QGkQxiYncQBEyIxU049DUGA3QR0bP2JuHfenZrlVB6E'
+SH_KEY = '1YL5a6FdK-rC6yfdQRWeG2M39364ayvqxP7uJGmnchos'
 
-LOOKUP_KEY = '1ts17B2k8Hv5wnHB-4kCE3PNFL1EXEJ01lx-s8zPpECE'
+LOOKUP_KEY = '1OCotEgMD3JC-agbl3inTql66qXzGVb9knlMypgNXc7U'
 
 # first item is where the names go,
 # second is where the placements go,
@@ -26,16 +26,16 @@ colOffset = 8
 
 #the top row on the bot sheet to fill in for each format
 sheet_start_rows = {1: 4,
-                    2: 19,
-                    3: 34,
-                    4: 49,
-                    6: 64}
+                    2: 32,
+                    3: 53,
+                    4: 72,
+                    6: 90}
 #the top row on the MMR tables xlsx file to fill in for each format
 table_start_rows = {1: 6,
-                    2: 22,
-                    3: 43,
-                    4: 62,
-                    6: 80}
+                    2: 34,
+                    3: 55,
+                    4: 74,
+                    6: 92}
 
 #first value is where the name goes, second is where the penalty amount goes
 pen_cells = ["C80", "D80"]
@@ -44,23 +44,23 @@ pen_row = 80
 #first cell is the start of the range, second is end of the range
 get_strike_info = ["E80", "M80"]
 
-bot_channels = [741906846209671223]
+bot_channels = [1488634624019271700]
 
 #id of the results channels for each tier
-channels = {"X": 698153967820996639,
-            "S": 445716741830737920,
-            "A": 445570804915109889,
-            "AB": 817605040105717830,
-            "B": 445570790151421972,
-            "C": 445570768269475840,
-            "D": 445570755657465856,
-            "E": 445716908923420682,
-            "F": 796870494405394472,
-            "SQ": 772531512410636289}
+channels = {"X": 1494770846701719582,
+            "S": 1494770892050534440,
+            "A": 1494770925412024573,
+            "AB": 1494770959624704130,
+            "B": 1494771093775581366,
+            "C": 1494771093775581366,
+            "D": 1494771160749965446,
+            "E": 1494771201401163857,
+            "F": 1494771307328569577,
+            "SQ": 1488615812481810542}
 
 #contains the emoji ID and role ID for each rank in the server;
 #rank names should match up with getRank function below
-ranks = {
+ranks = { # TODO: update role IDs and emojis
     "Grandmaster": {
         "emoji": "<:grandmaster:731579876846338161>",
         "roleid": 730976842898735195},
@@ -99,7 +99,7 @@ place_MMRs = {"gold": 7500,
               "iron": 3000}
 
 #this is where you define the MMR thresholds for each rank
-def getRank(mmr: int):
+def getRank(mmr: int): # TODO: update MMR thresholds
     if mmr >= 14500:
         return("Grandmaster")
     elif mmr >= 13000:
@@ -120,6 +120,9 @@ def getRank(mmr: int):
         return("Iron 2")
     else:
         return ("Iron 1")
+
+#number of players participating in events
+num_players = 24
 
 #ignore if end user
 #taken from gspread.utils:
