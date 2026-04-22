@@ -63,63 +63,73 @@ channels = {"X": 1494770846701719582,
 ranks = { # TODO: update role IDs and emojis
     "Grandmaster": {
         "emoji": "<:grandmaster:731579876846338161>",
-        "roleid": 730976842898735195},
+        "roleid": 1488276942959411340},
     "Master": {
         "emoji": "<:master:731597294914502737>",
-        "roleid": 445707276385386497},
+        "roleid": 1488277000505524224},
     "Diamond": {
         "emoji": "<:diamond:731579813386780722>",
-        "roleid": 445404401989844994},
+        "roleid": 1488277060198600734},
+    "Pearl": {
+        "emoji": "<:diamond:731579813386780722>",
+        "roleid": 1496535296668602418},
+    "Emerald": {
+        "emoji": "<:diamond:731579813386780722>",
+        "roleid": 1496535931757395968},
+    "Ruby": {
+        "emoji": "<:diamond:731579813386780722>",
+        "roleid": 1488277085121155193},
     "Sapphire": {
         "emoji": "<:sapphire:731579851802411068>",
-        "roleid": 730976660681130075},
+        "roleid": 1496536559535783987},
     "Platinum": {
         "emoji": "<:platinum:542204444302114826>",
-        "roleid": 445544728700649472},
+        "roleid": 1488277354156527719},
     "Gold": {
         "emoji": "<:gold:731579798111125594>",
-        "roleid": 445404441110380545},
+        "roleid": 1488277375127912478},
     "Silver": {
         "emoji": "<:silver:731579781828575243>",
-        "roleid": 445544735638159370},
+        "roleid": 1488277390453903371},
     "Bronze": {
         "emoji": "<:bronze:731579759712010320>",
-        "roleid": 445404463092596736},
-    "Iron 2": {
+        "roleid": 1488277406610489505},
+    "Iron": {
         "emoji": "<:iron:731579735544430703> 2",
-        "roleid": 730976738007580672},
-    "Iron 1": {
-        "emoji": "<:iron:731579735544430703> 1",
-        "roleid": 805288798879481886}
+        "roleid": 1488277425048518736}
     }
 
-place_MMRs = {"gold": 7500,
-              "silver": 6000,
-              "bronze": 4500,
-              "iron": 3000}
+place_MMRs = {"gold": 4500,
+              "silver": 3500,
+              "bronze": 2500,
+              "iron": 1500}
 
 #this is where you define the MMR thresholds for each rank
-def getRank(mmr: int): # TODO: update MMR thresholds
-    if mmr >= 14500:
+def getRank(mmr: int):
+    if mmr >= 11500:
         return("Grandmaster")
-    elif mmr >= 13000:
-        return("Master")
-    elif mmr >= 11500:
-        return("Diamond")
     elif mmr >= 10000:
-        return("Sapphire")
-    elif mmr >= 8500:
-        return("Platinum")
+        return("Master")
+    elif mmr >= 9000:
+        return("Diamond")
+    elif mmr >= 8000:
+        return("Pearl")
     elif mmr >= 7000:
-        return("Gold")
-    elif mmr >= 5500:
-        return("Silver")
+        return("Emerald")
+    elif mmr >= 6000:
+        return("Ruby")
+    elif mmr >= 5000:
+        return("Sapphire")
     elif mmr >= 4000:
-        return("Bronze")
+        return("Platinum")
+    elif mmr >= 3000:
+        return("Gold")
     elif mmr >= 2000:
-        return("Iron 2")
+        return("Silver")
+    elif mmr >= 1000:
+        return("Bronze")
     else:
-        return ("Iron 1")
+        return ("Iron")
 
 #number of players participating in events
 num_players = 24
