@@ -47,14 +47,16 @@ profanity_blacklist = []
 
 #names of the knockout rallies. can be updated if they add more
 rallies = {
-    "Golden": "<:goldenrally:1496556871184213760>",
-    "Ice": "<:icerally:1496556950572236830>",
-    "Moon": "<:moonrally:1496557028997464144>",
-    "Spiny": "<:spinyrally:1496557971633602591>",
-    "Cherry": "<:cherryrally:1496558024498610386>",
-    "Acorn": "<:acornrally:1496558171299516540>",
-    "Cloud": "<:cloudrally:1496558293878046951>",
-    "Heart": "<:heartrally:1496558347577720893>"
+    "Golden": "<:rally01golden:1495475155496079432>",
+    "Ice": "<:rally02ice:1495475318583066794>",
+    "Moon": "<:rally03moon:1495475373352292464>",
+    "Spiny": "<:rally04spiny:1495482735941259396>",
+    "Cherry": "<:rally05cherry:1495483655735214313>",
+    "Acorn": "<:rally06acorn:1495481302512701631>",
+    "Cloud": "<:rally07cloud:1495481609980481866>",
+    "Heart": "<:rally08heart:1495483365627924661>",
+    "Drill": "<:rally09drill:1523251786259890176>",
+    "Boomerang": "<:rally10boomerang:1523251808053624873>"
 }
 
 #relevant channels

@@ -14,6 +14,7 @@ dist/
 .env
 config.json
 credentials.json
+constants.py
 *.log
 logs/
 *.png
