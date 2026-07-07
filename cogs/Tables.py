@@ -10,9 +10,8 @@ import re
 import io
 import aiohttp
 import json
-import random
 
-from constants import (channels, ranks, bot_channels, num_players, SH_KEY, LOOKUP_KEY)
+from constants import (channels, general_channels, key_channels, ranks, num_players, SH_KEY, LOOKUP_KEY)
 
 def get_creds():
     return ServiceAccountCredentials.from_json_keyfile_name(
@@ -23,7 +22,9 @@ def get_creds():
             "https://www.googleapis.com/auth/spreadsheets",
         ],
     )
+
 agcm = gspread_asyncio.AsyncioGspreadClientManager(get_creds)
+
 
 class Tables(commands.Cog):
     def __init__(self, bot):
@@ -31,83 +32,267 @@ class Tables(commands.Cog):
         with open('./config.json', 'r') as cjson:
             self.config = json.load(cjson)
 
-    @commands.command(aliases=['l2t'])
-    async def lorenzi2table(self, ctx, *, data):
-        def isGps(scores:str):
-            #gps = scores.split("|")
-            gps = re.split("[|+]", scores)
-            for gp in gps:
-                if gp.strip().isdigit() == False:
-                    return False
-        def sumGps(scores:str):
-            #gps = scores.split("|")
-            gps = re.split("[|+]", scores)
-            sum = 0
-            for gp in gps:
-                sum += int(gp.strip())
-            return sum
-        def removeExtra(line):
-            splitLine = line.split()
-            if line.strip() == "":
+    # ── Helpers ───────────────────────────────────────────────────────────────
+
+    def _is_gps(self, scores: str) -> bool:
+        for gp in re.split(r"[|+]", scores):
+            if not gp.strip().isdigit():
                 return False
-            if len(splitLine) == 1:
+        return True
+
+    def _sum_gps(self, scores: str) -> int:
+        return sum(int(gp.strip()) for gp in re.split(r"[|+]", scores))
+
+    def _parse_lines(self, data: str) -> tuple[list[str], list[int]]:
+        def keep(line):
+            parts = line.split()
+            if not line.strip() or len(parts) < 2:
                 return False
-            scores = splitLine[len(splitLine)-1]
-            if scores.isdigit() == False and isGps(scores) == False:
-                return False
-            else:
-                return True
-        
-        lines = filter(removeExtra, data.split("\n"))
-        players = []
-        scores = []
-        for line in lines:
-            # removes country flag brackets
-            newline = re.sub("[\[].*?[\]]", "", line).split()
-            players.append(" ".join(newline[0:len(newline)-1]))
-            #scores.append(int(newline[len(newline)-1]))
-            gps = newline[len(newline)-1]
-            scores.append(sumGps(gps))
-        if len(players) != num_players:
-            await ctx.send(f"Your table does not contain {num_players} valid score lines, try again!")
+            last = parts[-1]
+            return last.isdigit() or self._is_gps(last)
+
+        players, scores = [], []
+        for line in filter(keep, data.split("\n")):
+            parts = line.split()
+            players.append(" ".join(parts[:-1]))
+            scores.append(self._sum_gps(parts[-1]))
+        return players, scores
+
+    # ── Unified !table command ────────────────────────────────────────────────
+
+    @commands.command(name="table")
+    @commands.max_concurrency(number=1, wait=True)
+    @commands.has_any_role("Administrator", "Updater", "Lounge Staff", "Reporter")
+    @commands.cooldown(3, 60, commands.BucketType.member)
+    async def table(self, ctx, *, data):
+        if ctx.guild.id != self.config["server"]:
+            await ctx.send("You cannot use this command in this server!")
             return
-        msg = "`!submit table <size> <tier> "
-        playerScoreStrings = []
-        for i in range(num_players):
-            playerScoreStrings.append("%s, %d" % (players[i], scores[i]))
-        msg += ", ".join(playerScoreStrings)
-        msg += "`"
-        await ctx.send(msg)
+
+        if ctx.channel.id in general_channels.values():
+            await ctx.send("This command cannot be used outside a tier channel.", delete_after=10)
+            return
+
+        tier = "All"
+        size = 1  # FFA only for now
+
+        # ── Parse score block ─────────────────────────────────────────────────
+        players, scores = self._parse_lines(data)
+        if len(players) != num_players:
+            await ctx.send(f"Your table does not contain {num_players} valid score lines, try again!\nYou are missing {num_players - len(players)} player(s).")
+            return
+
+        lower_names = [n.lower() for n in players]
+        if len(set(lower_names)) < len(lower_names):
+            await ctx.send("Duplicate names are not allowed, please try again.")
+            return
+
+        is300 = sum(scores)
+
+        # ── Sort players by score descending, compute placements ──────────────
+        paired = sorted(zip(scores, players), reverse=False)
+        sorted_scores = [s for s, _ in paired]
+        sorted_names  = [n for _, n in paired]
+
+        placements = []
+        for i, s in enumerate(sorted_scores):
+            if i == 0:
+                placements.append(1)
+            elif s == sorted_scores[i - 1]:
+                placements.append(placements[-1])
+            else:
+                placements.append(i + 1)
+        # ── Sheets name lookup ────────────────────────────────────────────────
+        agc = await agcm.authorize()
+        sh  = await agc.open_by_key(LOOKUP_KEY)
+        bot_sheet = await sh.worksheet("search")
+
+        await bot_sheet.batch_update([{
+            'range': "B9:B32",
+            'values': [[name] for name in sorted_names],
+        }])
+
+        got_batch  = await bot_sheet.batch_get(["C9:C32"])
+        good_names = [got_batch[0][i][0] for i in range(num_players)]
+
+        errors = "\n".join(
+            f"Player **{sorted_names[i]}** is not on the leaderboard; check your input"
+            for i in range(num_players)
+            if good_names[i] == "N/A"
+        )
+        if errors:
+            await ctx.send(errors)
+            return
+
+        sorted_scores.reverse()
+
+        # ── Build lorenzi image URL ───────────────────────────────────────────
+        table_text = (
+            "#hide playerScores\n"
+            f"#title Tier {tier} FFA\n"
+            "FFA - Free for All #FFAC1C\n" #8078FA ourple
+        )
+        for name, score in zip(good_names, sorted_scores):
+            table_text += f"{name} {score}\n"
+
+        image_url = (
+            "https://gb2.hlorenzi.com/table.png?data="
+            + urllib.parse.quote(table_text)
+        )
+        # ── Send confirmation preview ─────────────────────────────────────────
+        e = discord.Embed(title="Table")
+        e.set_image(url=image_url)
+        content = "Please react to this message with \U00002611 within the next 30 seconds to confirm the table is correct"
+        if is300 != 300:
+            e.add_field(
+                name="⚠️ Warning",
+                value=f"The total score of {is300} might be incorrect! Most tables should add up to 300 points. Please check your input for duplicate scores.",
+            )
+
+        embedded = await ctx.send(content=content, embed=e)
+        CHECK_BOX = "\U00002611"
+        X_MARK    = "\U0000274C"
+        await embedded.add_reaction(CHECK_BOX)
+        await embedded.add_reaction(X_MARK)
+
+        def check(reaction, user):
+            return (
+                user == ctx.author
+                and reaction.message.id == embedded.id
+                and str(reaction.emoji) in (CHECK_BOX, X_MARK)
+            )
+
+        try:
+            reaction, _ = await self.bot.wait_for('reaction_add', timeout=30.0, check=check)
+        except:
+            await embedded.delete()
+            return
+
+        if str(reaction.emoji) == X_MARK:
+            await embedded.delete()
+            return
+
+        # ── Persist to DB ─────────────────────────────────────────────────────
+        names_str  = ",".join(good_names)
+        places_str = ",".join(str(p) for p in reversed(placements))
+        db_entry   = (size, tier, names_str, places_str, image_url, 0, ctx.author.id)
+
+        try:
+            db = await aiosqlite.connect('updating.db')
+            c  = await db.cursor()
+            await c.execute(
+                """INSERT INTO tables (size, tier, names, placements, tableurl, messageid, authorid)
+                   VALUES (?,?,?,?,?,?,?)""",
+                db_entry,
+            )
+            new_id = c.lastrowid
+            await db.commit()
+        except Exception as exc:
+            print(exc)
+            return
+        finally:
+            await db.close()
+
+        # ── Download image and post to tier channel ───────────────────────────
+        async with aiohttp.ClientSession() as session:
+            async with session.get(image_url) as resp:
+                if resp.status != 200:
+                    await ctx.send("Could not download the table image.")
+                    return
+                file_data = io.BytesIO(await resp.read())
+                f = discord.File(file_data, filename="MogiTable.png")
+
+        result_embed = discord.Embed(title="Mogi Table", colour=int("625B09", 16))
+        result_embed.add_field(name="ID",           value=new_id)
+        result_embed.add_field(name="Tier",         value=tier)
+        result_embed.add_field(name="Submitted by", value=ctx.author.mention)
+        result_embed.set_image(url="attachment://MogiTable.png")
+
+        tier_channel = ctx.guild.get_channel(channels[tier.upper()])
+        table_msg    = await tier_channel.send(file=f, embed=result_embed)
+
+        await embedded.delete()
+
+        if tier_channel.id != ctx.channel.id:
+            await ctx.send(f"Successfully sent table to {tier_channel.mention} `(ID: {new_id})`")
+        else:
+            await ctx.message.delete()
+
+        # ── Update DB row with real message ID ────────────────────────────────
+        try:
+            db = await aiosqlite.connect('updating.db')
+            c  = await db.cursor()
+            await c.execute(
+                "UPDATE tables SET messageid = ? WHERE tableid = ?",
+                (table_msg.id, new_id),
+            )
+            await db.commit()
+        except Exception as exc:
+            print(exc)
+        finally:
+            await db.close()
+
+        # Post to updating log (if configured)
+        try:
+            log_channel_id = key_channels.get("updating_log", 0)
+            if log_channel_id:
+                log_channel = ctx.guild.get_channel(log_channel_id)
+                if log_channel:
+                    le = discord.Embed(title="Table Submitted", color=discord.Color.gold())
+                    le.add_field(name="ID", value=str(new_id), inline=True)
+                    le.add_field(name="Tier", value=tier, inline=True)
+                    le.add_field(name="Submitted by", value=ctx.author.mention, inline=True)
+                    try:
+                        le.add_field(name="Message Link", value=f"[Link]({table_msg.jump_url})", inline=False)
+                    except Exception as e:
+                        logger.error(f"Error adding message link to log embed: {e}", exc_info=True)
+                    await log_channel.send(embed=le)
+        except Exception as e:
+            logger.error(f"Error sending table submission message to log: {e}", exc_info=True)
+
+    @table.error
+    async def table_error(self, ctx, error):
+        if isinstance(error, commands.MissingAnyRole):
+            await ctx.send(
+                "You need the **Reporter** role to submit tables.\n"
+                "You can obtain it in the #self-roles channel.\n"
+                "集計を提出するにはReporterロールが必要です\nこれは #self-roles から取得できます。"
+            )
+        elif isinstance(error, commands.CommandOnCooldown):
+            await ctx.send(f"You're on cooldown. Try again in {error.retry_after:.0f}s.")
+
+    # ── Staff utility commands ────────────────────────────────────────────────
 
     @commands.command()
+    @commands.max_concurrency(number=1, wait=True)
+    @commands.has_any_role("Administrator", "Updater", "Lounge Staff")
     async def pending(self, ctx):
         if ctx.guild.id != self.config["server"]:
             await ctx.send("You cannot use this command in this server!")
             return
         try:
             db = await aiosqlite.connect('updating.db')
-            c = await db.cursor()
-            await c.execute("""SELECT * from tables""")
+            c  = await db.cursor()
+            await c.execute("SELECT * from tables")
             tables = await c.fetchall()
             msg = ""
             for tier in channels.keys():
-                tierTables = [table for table in tables if table[2].upper() == tier]
-                count = len(tierTables)
-                if count > 0:
-                    msg += ("Tier %s: %d tables\n"
-                            % (tier, count))
-                    for table in tierTables:
-                        msg += ("\tSubmission ID %s\n"
-                                % table[0])
-            if len(msg) == 0:
-                msg = "There are no pending tables to be updated"
-            await ctx.send(msg)
-        except:
+                tier_tables = [t for t in tables if t[2].upper() == tier]
+                if tier_tables:
+                    msg += f"Tier {tier}: {len(tier_tables)} tables\n"
+                    for t in tier_tables:
+                        msg += f"\tSubmission ID {t[0]}\n"
+            await ctx.send(msg or "There are no pending tables to be updated")
+        except Exception as e:
+            logger.error(f"Error fetching pending tables: {e}", exc_info=True)
+            await ctx.send("An error occurred while fetching pending tables.")
             return
         finally:
             await db.close()
 
     @commands.command()
+    @commands.max_concurrency(number=1, wait=True)
+    @commands.has_any_role("Administrator", "Updater", "Lounge Staff")
     async def view(self, ctx, tableid: int):
         if ctx.guild.id != self.config["server"]:
             await ctx.send("You cannot use this command in this server!")
@@ -115,64 +300,70 @@ class Tables(commands.Cog):
         try:
             db = await aiosqlite.connect('updating.db')
             c = await db.cursor()
+            
             await c.execute("SELECT * from tables WHERE tableid = ?", (tableid,))
             table = await c.fetchone()
-            #await ctx.send(table)
-            messageid = table[6]
-            lorenziurl = table[5]
-            tier = table[2]
-            channel = ctx.guild.get_channel(channels[tier.upper()])
             
-            #await ctx.send(tableMsg.jump_url)
-            e = discord.Embed(title="Table")
-            try:
-                tableMsg = await channel.fetch_message(messageid)
-                msgLink = "[Link](%s)" % tableMsg.jump_url
-                e.add_field(name="Message Link", value=msgLink)
-            except:
-                pass
-            e.set_image(url=lorenziurl)
-            #e.set_thumbnail(url=ctx.guild.icon)
-            await ctx.send(embed=e)
-            return
-        except:
+            if table:
+                tier = table[2]
+                channel = ctx.guild.get_channel(channels[tier.upper()])
+                e = discord.Embed(title="Table (Pending)", color=discord.Color.orange())
+                try:
+                    table_msg = await channel.fetch_message(table[6])
+                    e.add_field(name="Message Link", value=f"[Link]({table_msg.jump_url})")
+                except:
+                    pass
+                e.set_image(url=table[5])
+                await ctx.send(embed=e)
+            else:
+                await c.execute("SELECT * from updated WHERE tableid = ?", (tableid,))
+                updated = await c.fetchone()
+                
+                if updated:
+                    tier = updated[5]
+                    msgid = updated[4]
+                    channel = ctx.guild.get_channel(channels.get(tier.upper(), 0))
+                    e = discord.Embed(title="Table (Updated)", color=discord.Color.green())
+                    if channel:
+                        try:
+                            table_msg = await channel.fetch_message(msgid)
+                            e.add_field(name="Message Link", value=f"[Link]({table_msg.jump_url})")
+                        except:
+                            pass
+                    e.add_field(name="Tier", value=tier, inline=True)
+                    await ctx.send(embed=e)
+                else:
+                    await ctx.send(f"Table ID {tableid} not found in pending or updated tables.")
+        except Exception as ex:
             await ctx.send("Table couldn't be found")
-            return
         finally:
             await db.close()
 
-    @commands.group()
-    async def submit(self, ctx):
-        if ctx.invoked_subcommand is None:
-            return
-
-    @submit.command()
-    @commands.has_any_role("Administrator", "Updater", "Staff-S", "Reporter ‍")
-    #@commands.cooldown(3, 60, commands.BucketType.member)
-    async def delete(self, ctx, tableid:int):
+    @commands.command()
+    @commands.max_concurrency(number=1, wait=True)
+    @commands.has_any_role("Administrator", "Updater", "Lounge Staff", "Reporter")
+    async def delete(self, ctx, tableid: int):
         if ctx.guild.id != self.config["server"]:
             await ctx.send("You cannot use this command in this server!")
             return
         try:
             db = await aiosqlite.connect('updating.db')
-            c = await db.cursor()
+            c  = await db.cursor()
             await c.execute("SELECT * from tables WHERE tableid = ?", (tableid,))
-            table = await c.fetchone()
-            msgid = table[6]
-            authorid = table[7]
-            tier = table[2]
-            #print(msgid)
+            table    = await c.fetchone()
+            msg_id   = table[6]
+            author_id = table[7]
+            tier     = table[2]
         except:
-            await ctx.send("Database error: Table ID %d not found" % (tableid))
+            await ctx.send(f"Database error: Table ID {tableid} not found")
             return
         finally:
             await db.close()
         try:
-            #print(authorid)
-            channel = ctx.guild.get_channel(channels[tier.upper()])
-            tableMsg = await channel.fetch_message(msgid)
-            if authorid == ctx.author.id:
-                await tableMsg.delete()
+            channel   = ctx.guild.get_channel(channels[tier.upper()])
+            table_msg = await channel.fetch_message(msg_id)
+            if author_id == ctx.author.id:
+                await table_msg.delete()
             else:
                 await ctx.send("You are not the author of this table")
                 return
@@ -181,494 +372,29 @@ class Tables(commands.Cog):
             return
         try:
             db = await aiosqlite.connect('updating.db')
-            c = await db.cursor()
+            c  = await db.cursor()
             await c.execute("DELETE from tables WHERE tableid = ?", (tableid,))
             await db.commit()
-            await ctx.send("Removed table %d from approval queue" % tableid)
+            await ctx.send(f"Removed table {tableid} from approval queue")
+            # Log deletion to updating log
+            try:
+                log_channel_id = key_channels.get("updating_log", 0)
+                if log_channel_id:
+                    log_channel = ctx.guild.get_channel(log_channel_id)
+                    if log_channel:
+                        le = discord.Embed(title="Table Deleted", color=discord.Color.red())
+                        le.add_field(name="ID", value=str(tableid), inline=True)
+                        le.add_field(name="Tier", value=tier, inline=True)
+                        le.add_field(name="Deleted by", value=ctx.author.mention, inline=True)
+                        le.add_field(name="Original author", value=f"<@{author_id}>", inline=True)
+                        await log_channel.send(embed=le)
+            except Exception:
+                pass
         except:
             await ctx.send("Database error removing table from approval queue")
-            return
-        finally:
-            await db.close()
-        
-
-    @submit.command()
-    #@commands.max_concurrency(number=1,wait=True)
-    @commands.has_any_role("Administrator", "Updater", "Staff-S", "Reporter ‍")
-    @commands.cooldown(3, 60, commands.BucketType.member)
-    async def table(self, ctx, size: int, tier, *, args):
-        if ctx.guild.id != self.config["server"]:
-            await ctx.send("You cannot use this command in this server!")
-            return
-        agc = await agcm.authorize()
-        #sh = await agc.open_by_key(SH_KEY)
-        #botSheet = await sh.worksheet("Bot")
-        sh = await agc.open_by_key(LOOKUP_KEY)
-        botSheet = await sh.worksheet("search")
-        
-
-        VALID_SIZES = [1, 2, 3, 4, 6]
-        if size not in VALID_SIZES:
-            await ctx.send("Your size is not valid. Correct sizes are: %s"
-                           % (VALID_SIZES))
-            return
-
-        if tier.upper() not in channels.keys():
-            await ctx.send("Your tier is not valid. Correct tiers are: %s"
-                           % (list(channels.keys())))
-            return
-        
-        arguments = args.split(",")
-        if len(arguments) != num_players * 2:
-            if len(arguments) % 2 == 0:
-                ns = "names"
-            else:
-                ns = "scores"
-            await ctx.send(f"There must be exactly {num_players} players and {num_players} scores for each table, but you typed {int(len(arguments)/2)} {ns}"
-                           % (int(len(arguments)/2), ns))
-            return
-        names = []
-        scores = []
-        for i in range(num_players):
-            names.append(arguments[2*i].strip())
-            try:
-                scores.append(int(arguments[2*i+1].strip()))
-            except:
-                await ctx.send("%s is not a valid score!" %
-                               (arguments[2*i+1].strip()))
-                return
-        is300 = sum(scores)
-
-        teamscores = []
-        teamnames = []
-        teamplayerscores = []
-        for i in range(int(num_players/size)):
-            teamscore = 0
-            tnames = []
-            pscores = []
-            for j in range(size):
-                teamscore += scores[i*size+j]
-                tnames.append(names[i*size+j])
-                pscores.append(scores[i*size+j])
-            teamscores.append(teamscore)
-            teamnames.append(tnames)
-            teamplayerscores.append(pscores)
-
-        sortedScoresTeams = sorted(zip(teamscores, teamnames, teamplayerscores), reverse=False)
-        sortedScores = [x for x, _, _ in sortedScoresTeams]
-        sortedTeams = [x for _, x, _ in sortedScoresTeams]
-        sortedpScores = [x for _, _, x in sortedScoresTeams]
-        sortedNames = []
-        tableScores = []
-        placements = []
-        for i in range(len(sortedScores)):
-            sortedNames += sortedTeams[i]
-            tableScores += sortedpScores[i]
-            if i == 0:
-                placements.append(1)
-                continue
-            if sortedScores[i] == sortedScores[i-1]:
-                placements.append(placements[i-1])
-                continue
-            placements.append(i+1)
-        
-
-        updateCells = [{
-            #'range': "C84:C95",
-            'range': "B9:B20",
-            'values': [[name] for name in sortedNames]
-            }]
-
-        await botSheet.batch_update(updateCells)
-
-        #gotBatch = await botSheet.batch_get(["D84:E95"])
-        gotBatch = await botSheet.batch_get(["C9:C20"])
-        goodNames = [gotBatch[0][i][0] for i in range(num_players)]
-        #print(goodNames)
-        #mmrs = [gotBatch[0][i][1] for i in range(12)]
-
-        errors = ""
-        for i in range(num_players):
-            if goodNames[i] == "N/A":
-                #await ctx.send("Player %s is not on the leaderboard; check your input"
-                #               % (sortedNames[i]))
-                errors += ("Player %s is not on the leaderboard; check your input\n"
-                               % (sortedNames[i]))
-                #return
-        if len(errors) > 0:
-            await ctx.send(errors)
-            return
-
-        base_url_lorenzi = "https://gb.hlorenzi.com/table.png?data="
-        if size > 1:
-            table_text = ("#title Tier %s %dv%d\n"
-                          % (tier.upper(), size, size))
-        else:
-            table_text = ("#title Tier %s FFA\n"
-                          % (tier.upper()))
-        if size == 1:
-            table_text += "FFA - Free for All #4A82D0\n"
-        for i in range(int(num_players/size)):
-            #table_text += "Team %d - A\n" % (i+1)
-            if size != 1:
-                if i % 2 == 0:
-                    teamcolor = "#1D6ADE"
-                else:
-                    teamcolor = "#4A82D0"
-                table_text += "%d %s\n" % (placements[i], teamcolor)
-                #table_text += ("%s - A\n"
-                #               % (chr(random.randrange(65, 65+26))))
-            #else:
-            #    table_text += "Team %d - A\n" % (i+1)
-            for j in range(size):
-                index = size * i + j
-                table_text += ("%s %d\n"
-                               % (goodNames[index], sortedpScores[i][j]))
-
-        url_table_text = urllib.parse.quote(table_text)
-        image_url = base_url_lorenzi + url_table_text
-
-        e = discord.Embed(title="Table")
-        e.set_image(url=image_url)
-        content = "Please react to this message with \U00002611 within the next 30 seconds to confirm the table is correct"
-        if is300 != 300:
-            warning = ("The total score of %d might be incorrect! Most tables should add up to 300 points"
-                       % is300)
-            e.add_field(name="Warning", value=warning)
-        embedded = await ctx.send(content=content, embed=e)
-        #ballot box with check emoji
-        CHECK_BOX = "\U00002611"
-        X_MARK = "\U0000274C"
-        await embedded.add_reaction(CHECK_BOX)
-        await embedded.add_reaction(X_MARK)
-
-        def check(reaction, user):
-            if user != ctx.author:
-                return False
-            if reaction.message != embedded:
-                return False
-            if str(reaction.emoji) == X_MARK:
-                #raise Exception()
-                return True
-            if str(reaction.emoji) == CHECK_BOX:
-                return True
-        try:
-            reaction, user = await self.bot.wait_for('reaction_add', timeout=30.0, check=check)
-        except:
-            await embedded.delete()
-            return
-
-        if str(reaction.emoji) == X_MARK:
-            await embedded.delete()
-            return
-
-        #print(str(reaction.emoji))
-        #return
-            
-        namesstr = ",".join(goodNames)
-        placesstr = ",".join(str(p) for p in placements)
-        db_entry = (size, tier.upper(), namesstr, placesstr, image_url, 0, ctx.author.id)
-            
-        try:
-            db = await aiosqlite.connect('updating.db')
-            c = await db.cursor()
-            await c.execute("""INSERT INTO tables
-                            (size, tier, names, placements, tableurl, messageid, authorid)
-                            VALUES (?,?,?,?,?,?,?)
-                            """, db_entry)
-            newid = c.lastrowid
-            await db.commit()
-            
-            #await ctx.send("Table ID: %d" % (newid))
-        except Exception as e:
-            print(e)
-            return
-        finally:
-            await db.close()
-        async with aiohttp.ClientSession() as session:
-            async with session.get(image_url) as resp:
-                if resp.status != 200:
-                    return await ctx.send("Could not download image...")
-                data = io.BytesIO(await resp.read())
-                f = discord.File(data, filename="MogiTable.png")
-        e = discord.Embed(title="Mogi Table", colour=int("0A2D61", 16))
-        #e.add_field(name="Format", value="%dv%d" % (size, size))
-        e.add_field(name="ID", value=newid)
-        e.add_field(name="Tier", value=tier.upper())
-        e.add_field(name="Submitted by", value=ctx.author.mention)
-        update_command = ("`!update approve %d`\n`!update text %d %s %s; %s`"
-                          % (newid, size, tier.upper(),
-                             ", ".join(goodNames),
-                             " ".join(str(p) for p in placements)))
-        e.add_field(name="Updating command", value=update_command, inline=False)
-        e.set_image(url="attachment://MogiTable.png")
-        channel = ctx.guild.get_channel(channels[tier.upper()])
-        tableMsg = await channel.send(file=f, embed=e)
-        await embedded.delete()
-        if channel == ctx.channel:
-            await ctx.message.delete()
-        else:
-            await ctx.send("Successfully sent table to %s `(ID: %d)`" %
-                           (channel.mention, newid))
-
-        try:
-            db = await aiosqlite.connect('updating.db')
-            c = await db.cursor()
-            await c.execute("""UPDATE tables SET messageid = ?
-                                WHERE tableid = ?
-                            """, (tableMsg.id, newid))
-            await db.commit()
-        except Exception as e:
-            print(e)
-            return
         finally:
             await db.close()
 
-    @submit.command()
-    #@commands.max_concurrency(number=1,wait=True)
-    @commands.has_any_role("Administrator", "Updater", "Staff-S", "Reporter ‍")
-    @commands.cooldown(3, 60, commands.BucketType.member)
-    async def lorenzi(self, ctx, size: int, tier, *, data):
-        def isGps(scores:str):
-            #gps = scores.split("|")
-            gps = re.split("[|+]", scores)
-            for gp in gps:
-                if gp.strip().isdigit() == False:
-                    return False
-        def sumGps(scores:str):
-            #gps = scores.split("|")
-            gps = re.split("[|+]", scores)
-            sum = 0
-            for gp in gps:
-                sum += int(gp.strip())
-            return sum
-        def removeExtra(line):
-            splitLine = line.split()
-            if line.strip() == "":
-                return False
-            if len(splitLine) == 1:
-                return False
-            scores = splitLine[len(splitLine)-1]
-            if scores.isdigit() == False and isGps(scores) == False:
-                return False
-            else:
-                return True
-        
-        lines = filter(removeExtra, data.split("\n"))
-        names = []
-        scores = []
-        for line in lines:
-            # removes country flag brackets
-            newline = re.sub("[\[].*?[\]]", "", line).split()
-            names.append(" ".join(newline[0:len(newline)-1]))
-            #scores.append(int(newline[len(newline)-1]))
-            gps = newline[len(newline)-1]
-            scores.append(sumGps(gps))
-        if len(names) != num_players:
-            await ctx.send(f"Your table does not contain {num_players} valid score lines, try again!")
-            return
-        if ctx.guild.id != self.config["server"]:
-            await ctx.send("You cannot use this command in this server!")
-            return
-        agc = await agcm.authorize()
-        #sh = await agc.open_by_key(SH_KEY)
-        #botSheet = await sh.worksheet("Bot")
-        sh = await agc.open_by_key(LOOKUP_KEY)
-        botSheet = await sh.worksheet("search")
-        
 
-        VALID_SIZES = [1, 2, 3, 4, 6]
-        if size not in VALID_SIZES:
-            await ctx.send("Your size is not valid. Correct sizes are: %s"
-                           % (VALID_SIZES))
-            return
-
-        if tier.upper() not in channels.keys():
-            await ctx.send("Your tier is not valid. Correct tiers are: %s"
-                           % (list(channels.keys())))
-            return
-        is300 = sum(scores)
-
-        teamscores = []
-        teamnames = []
-        teamplayerscores = []
-        for i in range(int(num_players/size)):
-            teamscore = 0
-            tnames = []
-            pscores = []
-            for j in range(size):
-                teamscore += scores[i*size+j]
-                tnames.append(names[i*size+j])
-                pscores.append(scores[i*size+j])
-            teamscores.append(teamscore)
-            teamnames.append(tnames)
-            teamplayerscores.append(pscores)
-
-        sortedScoresTeams = sorted(zip(teamscores, teamnames, teamplayerscores), reverse=False)
-        sortedScores = [x for x, _, _ in sortedScoresTeams]
-        sortedTeams = [x for _, x, _ in sortedScoresTeams]
-        sortedpScores = [x for _, _, x in sortedScoresTeams]
-        sortedNames = []
-        tableScores = []
-        placements = []
-        for i in range(len(sortedScores)):
-            sortedNames += sortedTeams[i]
-            tableScores += sortedpScores[i]
-            if i == 0:
-                placements.append(1)
-                continue
-            if sortedScores[i] == sortedScores[i-1]:
-                placements.append(placements[i-1])
-                continue
-            placements.append(i+1)
-        
-
-        updateCells = [{
-            #'range': "C84:C95",
-            'range': "B9:B20",
-            'values': [[name] for name in sortedNames]
-            }]
-
-        await botSheet.batch_update(updateCells)
-
-        #gotBatch = await botSheet.batch_get(["D84:E95"])
-        gotBatch = await botSheet.batch_get(["C9:C20"])
-        goodNames = [gotBatch[0][i][0] for i in range(num_players)]
-        #print(goodNames)
-        #mmrs = [gotBatch[0][i][1] for i in range(num_players)]
-
-        errors = ""
-        for i in range(num_players):
-            if goodNames[i] == "N/A":
-                #await ctx.send("Player %s is not on the leaderboard; check your input"
-                #               % (sortedNames[i]))
-                errors += ("Player %s is not on the leaderboard; check your input\n"
-                               % (sortedNames[i]))
-                #return
-        if len(errors) > 0:
-            await ctx.send(errors)
-            return
-
-        base_url_lorenzi = "https://gb.hlorenzi.com/table.png?data="
-        if size > 1:
-            table_text = ("#title Tier %s %dv%d\n"
-                          % (tier.upper(), size, size))
-        else:
-            table_text = ("#title Tier %s FFA\n"
-                          % (tier.upper()))
-        if size == 1:
-            table_text += "FFA - Free for All #4A82D0\n"
-        for i in range(int(num_players/size)):
-            #table_text += "Team %d - A\n" % (i+1)
-            if size != 1:
-                if i % 2 == 0:
-                    teamcolor = "#1D6ADE"
-                else:
-                    teamcolor = "#4A82D0"
-                table_text += "%d %s\n" % (placements[i], teamcolor)
-            for j in range(size):
-                index = size * i + j
-                table_text += ("%s %d\n"
-                               % (goodNames[index], sortedpScores[i][j]))
-
-        url_table_text = urllib.parse.quote(table_text)
-        image_url = base_url_lorenzi + url_table_text + "&lounge=true"
-
-        e = discord.Embed(title="Table")
-        e.set_image(url=image_url)
-        content = "Please react to this message with \U00002611 within the next 30 seconds to confirm the table is correct"
-        if is300 != 300:
-            warning = ("The total score of %d might be incorrect! Most tables should add up to 300 points"
-                       % is300)
-            e.add_field(name="Warning", value=warning)
-        embedded = await ctx.send(content=content, embed=e)
-        #ballot box with check emoji
-        CHECK_BOX = "\U00002611"
-        X_MARK = "\U0000274C"
-        await embedded.add_reaction(CHECK_BOX)
-        await embedded.add_reaction(X_MARK)
-
-        def check(reaction, user):
-            if user != ctx.author:
-                return False
-            if reaction.message != embedded:
-                return False
-            if str(reaction.emoji) == X_MARK:
-                #raise Exception()
-                return True
-            if str(reaction.emoji) == CHECK_BOX:
-                return True
-        try:
-            reaction, user = await self.bot.wait_for('reaction_add', timeout=30.0, check=check)
-        except:
-            await embedded.delete()
-            return
-
-        if str(reaction.emoji) == X_MARK:
-            await embedded.delete()
-            return
-
-        #print(str(reaction.emoji))
-        #return
-            
-        namesstr = ",".join(goodNames)
-        placesstr = ",".join(str(p) for p in placements)
-        db_entry = (size, tier.upper(), namesstr, placesstr, image_url, 0, ctx.author.id)
-            
-        try:
-            db = await aiosqlite.connect('updating.db')
-            c = await db.cursor()
-            await c.execute("""INSERT INTO tables
-                            (size, tier, names, placements, tableurl, messageid, authorid)
-                            VALUES (?,?,?,?,?,?,?)
-                            """, db_entry)
-            newid = c.lastrowid
-            await db.commit()
-            
-            #await ctx.send("Table ID: %d" % (newid))
-        except Exception as e:
-            print(e)
-            return
-        finally:
-            await db.close()
-        async with aiohttp.ClientSession() as session:
-            async with session.get(image_url) as resp:
-                if resp.status != 200:
-                    return await ctx.send("Could not download image...")
-                data = io.BytesIO(await resp.read())
-                f = discord.File(data, filename="MogiTable.png")
-        e = discord.Embed(title="Mogi Table", colour=int("0A2D61", 16))
-        #e.add_field(name="Format", value="%dv%d" % (size, size))
-        e.add_field(name="ID", value=newid)
-        e.add_field(name="Tier", value=tier.upper())
-        e.add_field(name="Submitted by", value=ctx.author.mention)
-        update_command = ("`!update approve %d`\n`!update text %d %s %s; %s`"
-                          % (newid, size, tier.upper(),
-                             ", ".join(goodNames),
-                             " ".join(str(p) for p in placements)))
-        e.add_field(name="Updating command", value=update_command, inline=False)
-        e.set_image(url="attachment://MogiTable.png")
-        channel = ctx.guild.get_channel(channels[tier.upper()])
-        tableMsg = await channel.send(file=f, embed=e)
-        await embedded.delete()
-        if channel == ctx.channel:
-            await ctx.message.delete()
-        else:
-            await ctx.send("Successfully sent table to %s `(ID: %d)`" %
-                           (channel.mention, newid))
-
-        try:
-            db = await aiosqlite.connect('updating.db')
-            c = await db.cursor()
-            await c.execute("""UPDATE tables SET messageid = ?
-                                WHERE tableid = ?
-                            """, (tableMsg.id, newid))
-            await db.commit()
-        except Exception as e:
-            print(e)
-            return
-        finally:
-            await db.close()
-
-def setup(bot):
-    bot.add_cog(Tables(bot))
+async def setup(bot):
+    await bot.add_cog(Tables(bot))
