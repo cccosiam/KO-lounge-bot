@@ -4,6 +4,8 @@ import json
 import logging
 import asyncio
 
+from cogs.Namechange import RequestButtonView, NameChange
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s:%(levelname)s:%(name)s: %(message)s')
 logger = logging.getLogger('discord')
 
@@ -38,6 +40,8 @@ class KOLoungeBot(commands.Bot):
                 logger.info(f"Successfully loaded extension: {extension}")
             except Exception as e:
                 logger.error(f"Failed to load extension {extension}: {e}")
+        
+        self.add_view(RequestButtonView(self.cogs["NameChange"]))
 
         guild = discord.Object(id=self.config["server"])
         synced = await self.tree.sync(guild=guild)

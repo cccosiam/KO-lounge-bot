@@ -4,3 +4,4 @@ gspread-asyncio
 oauth2client
 pandas
 matplotlib
+better_profanity

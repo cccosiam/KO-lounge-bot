@@ -589,6 +589,7 @@ class Penalties(commands.Cog):
     @app_commands.choices(penalty_type=[
         app_commands.Choice(name="Late",                  value="Late"),
         app_commands.Choice(name="No show",               value="No show"),
+        app_commands.Choice(name="Repick",               value="Repick"),
         app_commands.Choice(name="Host issues",           value="Host issues"),
         app_commands.Choice(name="No host",               value="No host"),
         app_commands.Choice(name="Inappropriate name",    value="Inappropriate name"),

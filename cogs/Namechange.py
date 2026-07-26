@@ -15,13 +15,11 @@ from constants import SH_KEY, key_channels
 NAME_CHANGE_REQUEST_CHANNEL_ID = key_channels["name_change_request"]
 NAME_CHANGE_LOG_CHANNEL_ID     = key_channels["name_change_log"]
  
-# ── Configuration ─────────────────────────────────────────────────────────────
 STAFF_ROLES        = ("Administrator", "Lounge Staff")
 NICKNAME_REGEX     = re.compile(r"^(?=.*[A-Za-z])(?=.{2,16})[A-Za-z0-9]+( [A-Za-z0-9]+)*$")
 COOLDOWN_DAYS      = 60
 SHEET_NAME_CHANGES = "Name Changes"   # tab that tracks cooldowns & history
  
-# ── Google Sheets ─────────────────────────────────────────────────────────────
 def get_creds():
     return ServiceAccountCredentials.from_json_keyfile_name(
         "credentials.json",
@@ -34,7 +32,6 @@ def get_creds():
  
 agcm = gspread_asyncio.AsyncioGspreadClientManager(get_creds)
  
-# ── Embed helpers ─────────────────────────────────────────────────────────────
 def _embed(title, description, color):
     return discord.Embed(title=title, description=description, color=color)
  
@@ -49,9 +46,6 @@ def error_embed(title, description):
  
 def warning_embed(title, description):
     return _embed(title, description, discord.Color.orange())
- 
- 
-# ── Sheet helpers ─────────────────────────────────────────────────────────────
  
 async def get_sheet():
     agc = await agcm.authorize()
@@ -114,9 +108,6 @@ async def update_player_name_in_history(old_name: str, new_name: str) -> bool:
     except Exception:
         return False
  
- 
-# ── Cooldown check ────────────────────────────────────────────────────────────
- 
 def cooldown_remaining(last_date_str: str) -> Optional[int]:
     """
     Returns the number of days remaining on the cooldown,
@@ -132,9 +123,6 @@ def cooldown_remaining(last_date_str: str) -> Optional[int]:
         return remaining if remaining > 0 else None
     except ValueError:
         return None
- 
- 
-# ── Modals ────────────────────────────────────────────────────────────────────
  
 class NameChangeModal(discord.ui.Modal, title="Name Change Request"):
     new_name = discord.ui.TextInput(
@@ -180,9 +168,6 @@ class DenyReasonModal(discord.ui.Modal, title="Deny Name Change Request"):
             self.log_msg,
             self.reason.value,
         )
- 
- 
-# ── Views ─────────────────────────────────────────────────────────────────────
  
 class RequestButtonView(discord.ui.View):
     """Persistent view shown in #name-change-request with the Request button."""
@@ -263,9 +248,7 @@ class StaffActionView(discord.ui.View):
             )
         )
  
- 
-# ── Cog ───────────────────────────────────────────────────────────────────────
- 
+
 class NameChange(commands.Cog):
  
     def __init__(self, bot: commands.Bot):
@@ -274,10 +257,6 @@ class NameChange(commands.Cog):
             self.config = json.load(f)
         self._next_id   = 1      # simple in-memory counter; reset on restart
         self._pending: dict[int, dict] = {}   # request_id → request data
- 
-    # ─────────────────────────────────────────────────────────────────────────
-    # Setup: post (or restore) the info embed in #name-change-request
-    # ─────────────────────────────────────────────────────────────────────────
  
     @commands.command(name="setup_namechange")
     @commands.has_any_role(*STAFF_ROLES)
@@ -302,15 +281,10 @@ class NameChange(commands.Cog):
         await channel.send(embed=e, view=RequestButtonView(self))
         await ctx.send(f"Info embed posted in {channel.mention}.", ephemeral=True)
  
-    # ─────────────────────────────────────────────────────────────────────────
-    # Process a new name-change request (called from modal)
-    # ─────────────────────────────────────────────────────────────────────────
- 
     async def process_request(self, interaction: discord.Interaction, raw_name: str):
         member   = interaction.user
         new_name = raw_name.strip()
  
-        # ── Validate format ───────────────────────────────────────────────────
         if not NICKNAME_REGEX.match(new_name):
             await interaction.response.send_message(
                 embed=error_embed(
@@ -322,7 +296,6 @@ class NameChange(commands.Cog):
             )
             return
  
-        # ── Check they're a verified player ───────────────────────────────────
         old_name = member.display_name
         if old_name is None:
             await interaction.response.send_message(
@@ -335,7 +308,6 @@ class NameChange(commands.Cog):
             )
             return
  
-        # ── Same-name check ───────────────────────────────────────────────────
         if new_name.lower() == old_name.lower():
             await interaction.response.send_message(
                 embed=error_embed(
@@ -346,7 +318,6 @@ class NameChange(commands.Cog):
             )
             return
  
-        # ── Cooldown check ────────────────────────────────────────────────────
         await interaction.response.defer(ephemeral=True)
  
         nc_data = await get_player_nc_data(member.id)
@@ -364,7 +335,6 @@ class NameChange(commands.Cog):
                     )
                     return
  
-        # ── Check for duplicate pending request ───────────────────────────────
         if any(r["requester_id"] == member.id for r in self._pending.values()):
             await interaction.followup.send(
                 embed=warning_embed(
@@ -376,7 +346,6 @@ class NameChange(commands.Cog):
             )
             return
  
-        # ── Post to #name-change-log ──────────────────────────────────────────
         log_channel = interaction.guild.get_channel(NAME_CHANGE_LOG_CHANNEL_ID)
         if log_channel is None:
             await interaction.followup.send(
@@ -423,10 +392,6 @@ class NameChange(commands.Cog):
             ephemeral=True,
         )
  
-    # ─────────────────────────────────────────────────────────────────────────
-    # Accept a request
-    # ─────────────────────────────────────────────────────────────────────────
- 
     async def accept_request(
         self,
         interaction: discord.Interaction,
@@ -449,12 +414,10 @@ class NameChange(commands.Cog):
  
         errors = []
  
-        # ── Update Player History sheet ───────────────────────────────────────
         sheet_ok = await update_player_name_in_history(old_name, new_name)
         if not sheet_ok:
             errors.append(f"Could not find **{old_name}** in Player History.")
  
-        # ── Update server nickname ────────────────────────────────────────────
         if member is not None:
             try:
                 await member.edit(nick=new_name, reason=f"Name change #{request_id} approved by {interaction.user}")
@@ -465,15 +428,12 @@ class NameChange(commands.Cog):
         else:
             errors.append("Player is no longer in the server — sheet updated but nickname not changed.")
  
-        # ── Update cooldown sheet ─────────────────────────────────────────────
         req = self._pending[request_id]
         now_str = datetime.now(timezone.utc).isoformat()
         await set_player_nc_data(requester_id, free_used=True, last_date=now_str)
  
-        # ── Remove from pending ───────────────────────────────────────────────
         del self._pending[request_id]
  
-        # ── Edit log embed ────────────────────────────────────────────────────
         e = log_msg.embeds[0] if log_msg.embeds else discord.Embed()
         e.color = discord.Color.green()
         e.title = f"Name Change Request #{request_id} — ✅ Accepted"
@@ -486,7 +446,6 @@ class NameChange(commands.Cog):
             e.add_field(name="⚠️ Warnings", value="\n".join(f"• {err}" for err in errors), inline=False)
         await log_msg.edit(embed=e, view=None)
  
-        # ── DM the player ─────────────────────────────────────────────────────
         if member is not None:
             try:
                 dm_embed = success_embed(
@@ -502,10 +461,6 @@ class NameChange(commands.Cog):
             f"Request #{request_id} accepted." + (f"\n⚠️ Warnings:\n" + "\n".join(errors) if errors else ""),
             ephemeral=True,
         )
- 
-    # ─────────────────────────────────────────────────────────────────────────
-    # Deny a request
-    # ─────────────────────────────────────────────────────────────────────────
  
     async def deny_request(
         self,
@@ -527,7 +482,6 @@ class NameChange(commands.Cog):
  
         del self._pending[request_id]
  
-        # ── Edit log embed ────────────────────────────────────────────────────
         e = log_msg.embeds[0] if log_msg.embeds else discord.Embed()
         e.color = discord.Color.red()
         e.title = f"Name Change Request #{request_id} — ❌ Denied"
@@ -539,7 +493,6 @@ class NameChange(commands.Cog):
         )
         await log_msg.edit(embed=e, view=None)
  
-        # ── DM the player ─────────────────────────────────────────────────────
         member = interaction.guild.get_member(requester_id)
         if member is not None:
             try:
@@ -556,10 +509,6 @@ class NameChange(commands.Cog):
         await interaction.followup.send(
             f"Request #{request_id} denied.", ephemeral=True
         )
- 
-    # ─────────────────────────────────────────────────────────────────────────
-    # Staff prefix commands
-    # ─────────────────────────────────────────────────────────────────────────
  
     @commands.command(name="nc_accept")
     @commands.has_any_role(*STAFF_ROLES)
@@ -726,9 +675,7 @@ class NameChange(commands.Cog):
         ]
         await ctx.send("**Pending name change requests:**\n" + "\n".join(lines))
  
- 
-# ── Setup ─────────────────────────────────────────────────────────────────────
- 
+
 async def setup(bot: commands.Bot):
     await bot.add_cog(NameChange(bot))
  
