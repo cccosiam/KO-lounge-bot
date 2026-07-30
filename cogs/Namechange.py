@@ -53,44 +53,89 @@ async def get_sheet():
     return await sh.worksheet(SHEET_NAME_CHANGES)
  
 async def get_name_change_row(ws, discord_id: int) -> Optional[int]:
-    """Return the 1-based row index for a discord_id in col A, or None."""
+    """Return the last 1-based row index for a discord_id in col A, or None."""
     id_col = await ws.col_values(1)
-    try:
-        return id_col.index(str(discord_id)) + 1
-    except ValueError:
-        return None
- 
+    discord_id_str = str(discord_id)
+    for i in range(len(id_col) - 1, -1, -1):
+        if id_col[i] == discord_id_str:
+            return i + 1
+    return None
+
 async def get_player_nc_data(discord_id: int) -> Optional[dict]:
     """
     Fetch name-change data for a player from the sheet.
-    Columns: A=discord_id  B=free_used (TRUE/FALSE)  C=last_change_date (ISO)
+    Supports legacy per-player rows and newer request-log rows.
+    Columns:
+      A=discord_id
+      B=free_used (TRUE/FALSE)
+      C=last_change_date (ISO)
+      D=old_name
+      E=new_name
+      F=requested_at
+      G=status
     Returns None if the player has no row yet (treat as first-time).
     """
     try:
-        ws  = await get_sheet()
+        ws = await get_sheet()
         row = await get_name_change_row(ws, discord_id)
         if row is None:
             return None
         vals = await ws.row_values(row)
         return {
-            "row":        row,
+            "row": row,
             "discord_id": vals[0] if len(vals) > 0 else "",
-            "free_used":  vals[1].upper() == "TRUE" if len(vals) > 1 else False,
-            "last_date":  vals[2] if len(vals) > 2 else "",
+            "free_used": vals[1].upper() == "TRUE" if len(vals) > 1 else False,
+            "last_date": vals[2] if len(vals) > 2 else "",
+            "old_name": vals[3] if len(vals) > 3 else "",
+            "new_name": vals[4] if len(vals) > 4 else "",
+            "requested_at": vals[5] if len(vals) > 5 else "",
+            "status": vals[6] if len(vals) > 6 else "",
         }
     except Exception:
         return None
- 
-async def set_player_nc_data(discord_id: int, free_used: bool, last_date: str):
+
+async def append_name_change_request(
+    discord_id: int,
+    old_name: str,
+    new_name: str,
+    is_free: bool,
+    requested_at: str,
+) -> int:
+    """Append a new request row and return its 1-based sheet row index."""
+    ws = await get_sheet()
+    values = [
+        str(discord_id),
+        str(is_free).upper(),
+        "",
+        old_name,
+        new_name,
+        requested_at,
+        "PENDING",
+    ]
+    await ws.append_row(values)
+    all_rows = await ws.get_all_values()
+    return len(all_rows)
+
+async def set_player_nc_data(
+    discord_id: int,
+    free_used: bool,
+    last_date: str,
+    row: Optional[int] = None,
+):
     """Write or update the name-change row for a player."""
-    ws  = await get_sheet()
-    row = await get_name_change_row(ws, discord_id)
+    ws = await get_sheet()
     if row is None:
-        # Append new row
+        row = await get_name_change_row(ws, discord_id)
+    if row is None:
         await ws.append_row([str(discord_id), str(free_used).upper(), last_date])
     else:
         await ws.update(f"A{row}:C{row}", [[str(discord_id), str(free_used).upper(), last_date]])
- 
+
+async def set_name_change_request_status(row: int, status: str):
+    """Update the request status for a given sheet row."""
+    ws = await get_sheet()
+    await ws.update(f"G{row}", [[status]])
+
 async def update_player_name_in_history(old_name: str, new_name: str) -> bool:
     """Update the player's name in column A of Player History."""
     try:
@@ -255,7 +300,6 @@ class NameChange(commands.Cog):
         self.bot = bot
         with open('./config.json', 'r') as f:
             self.config = json.load(f)
-        self._next_id   = 1      # simple in-memory counter; reset on restart
         self._pending: dict[int, dict] = {}   # request_id → request data
  
     @commands.command(name="setup_namechange")
@@ -355,10 +399,25 @@ class NameChange(commands.Cog):
             )
             return
  
-        request_id = self._next_id
-        self._next_id += 1
- 
         is_free = nc_data is None or not nc_data["free_used"]
+        requested_at = datetime.now(timezone.utc).isoformat()
+        try:
+            request_id = await append_name_change_request(
+                member.id,
+                old_name,
+                new_name,
+                is_free,
+                requested_at,
+            )
+        except Exception:
+            await interaction.followup.send(
+                embed=error_embed(
+                    "❌ Sheet Error",
+                    "Could not save your name change request. Please try again later.",
+                ),
+                ephemeral=True,
+            )
+            return
  
         e = discord.Embed(
             title=f"Name Change Request #{request_id}",
@@ -430,9 +489,8 @@ class NameChange(commands.Cog):
  
         req = self._pending[request_id]
         now_str = datetime.now(timezone.utc).isoformat()
-        await set_player_nc_data(requester_id, free_used=True, last_date=now_str)
- 
-        del self._pending[request_id]
+        await set_player_nc_data(requester_id, free_used=True, last_date=now_str, row=request_id)
+        await set_name_change_request_status(request_id, "ACCEPTED")
  
         e = log_msg.embeds[0] if log_msg.embeds else discord.Embed()
         e.color = discord.Color.green()
@@ -479,9 +537,10 @@ class NameChange(commands.Cog):
                 "This request has already been processed.", ephemeral=True
             )
             return
- 
+
+        await set_name_change_request_status(request_id, "DENIED")
         del self._pending[request_id]
- 
+
         e = log_msg.embeds[0] if log_msg.embeds else discord.Embed()
         e.color = discord.Color.red()
         e.title = f"Name Change Request #{request_id} — ❌ Denied"
