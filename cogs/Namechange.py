@@ -255,14 +255,16 @@ class NameChange(commands.Cog):
         self.bot = bot
         with open('./config.json', 'r') as f:
             self.config = json.load(f)
-        self._next_id   = 1      # simple in-memory counter; reset on restart
+        self._next_id   = 1      # simple in-memory counter; updated from sheet on startup
         self._pending: dict[int, dict] = {}   # request_id → request data
  
-    @commands.command(name="setup_namechange")
-    @commands.has_any_role(*STAFF_ROLES)
-    async def setup_namechange(self, ctx):
-        """Posts the name-change info embed with the Request button. Run once."""
-        if ctx.guild.id != self.config["server"]:
+    async def initialize_next_id(self):
+        try:
+             ws = await get_sheet()
+             row_count = len(await ws.col_values(1))
+             self._next_id = max(self._next_id, row_count + 1)
+        except Exception:
+            self._next_id = max(self._next_id, 1)
             return
  
         channel = ctx.guild.get_channel(NAME_CHANGE_REQUEST_CHANNEL_ID)
@@ -677,5 +679,7 @@ class NameChange(commands.Cog):
  
 
 async def setup(bot: commands.Bot):
-    await bot.add_cog(NameChange(bot))
+    cog = NameChange(bot)
+    await cog.initialize_next_id()
+    await bot.add_cog(cog)
  
