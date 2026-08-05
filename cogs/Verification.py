@@ -88,7 +88,7 @@ class VerificationModal(discord.ui.Modal, title="MKCentral Verification"):
 
     nickname = discord.ui.TextInput(
         label="Nickname",
-        placeholder="e.g. Kusaan",
+        placeholder="Name must be 2-16 characters long.",
         min_length=2,
         max_length=16,
     )

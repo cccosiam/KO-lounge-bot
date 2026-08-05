@@ -172,7 +172,7 @@ def cooldown_remaining(last_date_str: str) -> Optional[int]:
 class NameChangeModal(discord.ui.Modal, title="Name Change Request"):
     new_name = discord.ui.TextInput(
         label="New Nickname",
-        placeholder="e.g. Kusaan",
+        placeholder="Name must be 2-16 characters long.",
         min_length=2,
         max_length=16,
     )

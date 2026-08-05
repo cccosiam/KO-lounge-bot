@@ -342,9 +342,14 @@ class Updating(commands.Cog):
 
             player_placement = int(placements[int(i/size)])
             placementUpdateCells.append({'range': cellA1, 'values': [[player_placement]]})
-        
+
+        idCell = await idSheet.acell('A1')
+        current_id = int(idCell.value) if idCell.value else 0
         idNum = tableid
-        await idSheet.update_cell(1, 1, idNum)
+        if idNum > current_id:
+            await idSheet.update_cell(1, 1, idNum)
+        else:
+            idNum = current_id 
 
         image_output_path = Path("MMRTable.png")
         
@@ -1431,6 +1436,99 @@ class Updating(commands.Cog):
     #     except discord.HTTPException:
     #         pass
     #     await ctx.send(f"Successfully placed {goodName} in {rank.lower()} with {placemmr} MMR; make sure to give them the {rank.lower()} role in server!")
+
+    @commands.command(name="assignranks")
+    @commands.has_any_role("Administrator", "Lounge Staff")
+    async def assignranks(self, ctx):
+        """
+        Assigns a rank role to every member with the Player role based on
+        their current MMR in Player History. Run once at the start of a season.
+        """
+        if ctx.guild.id != self.config["server"]:
+            return
+
+        status_msg = await ctx.send("fetching player data from sheet…")
+
+        agc = await agcm.authorize()
+        sh  = await agc.open_by_key(SH_KEY)
+        ph  = await sh.worksheet("Player History")
+
+        # Column A = name, column E = current MMR (adjust if your layout differs)
+        name_col = await ph.col_values(1)
+        mmr_col  = await ph.col_values(5)
+
+        # Build a name → MMR lookup (lowercase keys for case-insensitive matching)
+        sheet_data = {}
+        for i, name in enumerate(name_col):
+            name = name.strip()
+            if not name:
+                continue
+            mmr_val = mmr_col[i].strip() if i < len(mmr_col) else ""
+            try:
+                sheet_data[name.lower()] = int(mmr_val)
+            except (ValueError, TypeError):
+                pass  # skip header or non-numeric MMR cells
+
+        # ── Collect all rank role objects ─────────────────────────────────────
+        rank_roles = {
+            rank_name: ctx.guild.get_role(info["roleid"])
+            for rank_name, info in ranks.items()
+        }
+        all_rank_roles = [r for r in rank_roles.values() if r is not None]
+
+        # ── Get the Player role ───────────────────────────────────────────────
+        player_role = discord.utils.get(ctx.guild.roles, name="Player")
+        if player_role is None:
+            await status_msg.edit(content="could not find the **Player** role.")
+            return
+
+        players = [m for m in ctx.guild.members if player_role in m.roles and not m.bot]
+        await status_msg.edit(content=f"assigning ranks to {len(players)} players…")
+
+        assigned  = 0
+        skipped   = []
+
+        for member in players:
+            display = member.display_name.strip().lower()
+
+            if display not in sheet_data:
+                skipped.append(f"• **{member.display_name}** — not found in sheet")
+                continue
+
+            mmr = sheet_data[display]
+            rank_name = getRank(mmr)
+            new_role = rank_roles.get(rank_name)
+
+            if new_role is None:
+                skipped.append(f"• **{member.display_name}** — rank `{rank_name}` has no role configured")
+                continue
+
+            # Remove all existing rank roles, then add the correct one
+            roles_to_remove = [r for r in member.roles if r in all_rank_roles and r != new_role]
+            try:
+                if roles_to_remove:
+                    await member.remove_roles(*roles_to_remove, reason="Season rank reset")
+                if new_role not in member.roles:
+                    await member.add_roles(new_role, reason=f"Season rank assignment: {rank_name}")
+                assigned += 1
+            except discord.Forbidden:
+                skipped.append(f"• **{member.display_name}** — missing permissions to edit roles")
+            except discord.HTTPException as e:
+                skipped.append(f"• **{member.display_name}** — HTTP error: `{e}`")
+
+            # Small delay to avoid hitting Discord's rate limit on role edits
+            await asyncio.sleep(0.2)
+
+        # ── Final report ──────────────────────────────────────────────────────
+        summary = f"done. **{assigned}/{len(players)}** players assigned ranks."
+        if skipped:
+            skipped_text = "\n".join(skipped)
+            # Split into chunks if too long for a single message
+            if len(skipped_text) > 1800:
+                skipped_text = skipped_text[:1800] + "\n… (truncated)"
+            summary += f"\n\n**Skipped ({len(skipped)}):**\n{skipped_text}"
+
+        await status_msg.edit(content=summary)
 
     async def processInstructions(self, ctx: commands.Context, tier: str, instructions_str: str):
         returnInstructions = {}
