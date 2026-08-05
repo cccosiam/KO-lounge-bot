@@ -73,7 +73,16 @@ class Tables(commands.Cog):
             await ctx.send("This command cannot be used outside a tier channel.", delete_after=10)
             return
 
-        tier = "All"
+        channel_name = (ctx.channel.name or "").lower()
+        if not channel_name.startswith("tier-"):
+            await ctx.send("This command can only be used in a tier channel.", delete_after=10)
+            return
+
+        tier = channel_name.split("tier-", 1)[1].upper()
+        if tier not in channels:
+            await ctx.send(f"Unknown tier channel: {ctx.channel.name}", delete_after=10)
+            return
+
         size = 1  # FFA only for now
 
         # ── Parse score block ─────────────────────────────────────────────────
