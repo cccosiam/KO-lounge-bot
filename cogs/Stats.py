@@ -14,7 +14,7 @@ import json
 import random
 from typing import Optional
 
-from constants import (stats_cell, channels, ranks, num_players, SH_KEY, LOOKUP_KEY)
+from constants import (stats_cell, channels, ranks, num_players, season, SH_KEY, LOOKUP_KEY)
 
 def get_creds():
     return ServiceAccountCredentials.from_json_keyfile_name(
@@ -96,7 +96,7 @@ class Stats(commands.Cog):
         #l10_avg = "-"
         l10_avg = f"{self.ordinal(l10_avg)}" if l10_avg != "-" else "-"
         embed = discord.Embed(
-            title="KO Lounge Preseason Stats",
+            title=f"KO Lounge Season {season} Stats",
             color=discord.Color.green(),
             description=f"**{name}**"
         )

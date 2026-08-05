@@ -313,35 +313,34 @@ class Verification(commands.Cog):
             log_reason = "Active verification in progress"
             return
 
-        if player_id >= 91000:
-            await fail(
-                error_embed(
-                    "Manual Verification Required",
-                    "Your account must be verified manually by Staff. "
-                    "You will get a DM as soon as you get verified.\n"
-                    "あなたのアカウントはスタッフによる手動の認証が必要です。認証が完了しだい、DMでお知らせします。",
-                ),
-                f"MKC ID #{player_id} is a newly created account",
-            )
+        # if player_id >= 93000:
+        #     await fail(
+        #         error_embed(
+        #             "Manual Verification Required",
+        #             "Your account must be verified manually by Staff. "
+        #             "You will get a DM as soon as you get verified.\n"
+        #             "あなたのアカウントはスタッフによる手動の認証が必要です。認証が完了しだい、DMでお知らせします。",
+        #         ),
+        #         f"MKC ID #{player_id} is a newly created account",
+        #     )
 
-            pending_channel = interaction.guild.get_channel(PENDING_VERIFY_CHANNEL_ID)
-            if pending_channel:
-                e = discord.Embed(
-                    title="New Account Pending Verification",
-                    color=discord.Color.yellow(),
-                )
-                e.add_field(name="User", value=f"{member.mention} (`{member.id}`)", inline=False)
-                e.add_field(name="Nickname", value=nickname, inline=True)
-                e.add_field(name="MKC ID", value=f"#{player_id}", inline=True)
-                e.add_field(name="MKC Profile", value=f"[Link]({normalized_url})", inline=True)
-                e.set_thumbnail(url=member.display_avatar.url)
-                e.timestamp = discord.utils.utcnow()
-                try:
-                    await pending_channel.send(embed=e)
-                except discord.HTTPException:
-                    pass
-            return
-
+        #     pending_channel = interaction.guild.get_channel(PENDING_VERIFY_CHANNEL_ID)
+        #     if pending_channel:
+        #         e = discord.Embed(
+        #             title="New Account Pending Verification",
+        #             color=discord.Color.yellow(),
+        #         )
+        #         e.add_field(name="User", value=f"{member.mention} (`{member.id}`)", inline=False)
+        #         e.add_field(name="Nickname", value=nickname, inline=True)
+        #         e.add_field(name="MKC ID", value=f"#{player_id}", inline=True)
+        #         e.add_field(name="MKC Profile", value=f"[Link]({normalized_url})", inline=True)
+        #         e.set_thumbnail(url=member.display_avatar.url)
+        #         e.timestamp = discord.utils.utcnow()
+        #         try:
+        #             await pending_channel.send(embed=e)
+        #         except discord.HTTPException:
+        #             pass
+        #     return
 
 
         self._in_progress.add(member.id)

@@ -256,7 +256,6 @@ class Updating(commands.Cog):
         sh = await agc.open_by_key(SH_KEY)
         botSheet = await sh.worksheet("Bot")
         pHistory = await sh.worksheet("Player History")
-        placementHistory = await sh.worksheet("Placement History")
         idSheet = await sh.worksheet("ID")
         
         channel = ctx.guild.get_channel(channels[tier.upper()])
@@ -398,7 +397,6 @@ class Updating(commands.Cog):
                         await member.add_roles(role2)
        
         await pHistory.batch_update(updateCells)
-        # await placementHistory.batch_update(placementUpdateCells)
         await msg.delete()
 
         response_msg_content = f"Table #{idNum} updated successfully"
@@ -877,7 +875,6 @@ class Updating(commands.Cog):
         agc = await agcm.authorize()
         sh = await agc.open_by_key(SH_KEY)
         pHistory = await sh.worksheet("Player History")
-        placementHistory = await sh.worksheet("Placement History")
         db = None
         try:
             db = await aiosqlite.connect('updating.db')
@@ -907,9 +904,8 @@ class Updating(commands.Cog):
                             'values': [[oldpeak]]}
                 clearedCells.append(peakCell)
             # Use separate request payload copies for each worksheet to avoid gspread mutating the shared list
-            await asyncio.gather(
-                pHistory.batch_update([{'range': cell['range'], 'values': cell['values']} for cell in clearedCells]),
-                placementHistory.batch_update([{'range': cell['range'], 'values': cell['values']} for cell in clearedCells])
+            await pHistory.batch_update(
+                [{'range': cell['range'], 'values': cell['values']} for cell in clearedCells]
             )
             channel = ctx.guild.get_channel(channels[tier.upper()])
             await c.execute("DELETE from updated WHERE tableid = ?", (idNum,))
@@ -959,7 +955,6 @@ class Updating(commands.Cog):
         agc = await agcm.authorize()
         sh = await agc.open_by_key(SH_KEY)
         pHistory = await sh.worksheet("Player History")
-        placementHistory = await sh.worksheet("Placement History")
 
         db = None
         try:
@@ -1016,9 +1011,8 @@ class Updating(commands.Cog):
             clear_range = rowcol_to_a1(matched_row, matched_col)
             clear_payload = [{'range': clear_range, 'values': [['']]}]
 
-            await asyncio.gather(
-                pHistory.batch_update(clear_payload),
-                placementHistory.batch_update([{'range': clear_range, 'values': [['']]}])
+            await pHistory.batch_update(
+                [{'range': cell['range'], 'values': cell['values']} for cell in clearedCells]
             )
             # Log to results channel
             channel = ctx.guild.get_channel(channels[tier.upper()])
