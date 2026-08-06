@@ -65,6 +65,7 @@ class Tables(commands.Cog):
     @commands.has_any_role("Administrator", "Updater", "Lounge Staff", "Reporter")
     @commands.cooldown(3, 60, commands.BucketType.member)
     async def table(self, ctx, *, data):
+
         if ctx.guild.id != self.config["server"]:
             await ctx.send("You cannot use this command in this server!")
             return
@@ -74,11 +75,12 @@ class Tables(commands.Cog):
             return
 
         channel_name = (ctx.channel.name or "").lower()
-        if not channel_name.startswith("tier-"):
+        tier_match = re.search(r"tier-([a-z0-9]+)", channel_name)
+        if not tier_match:
             await ctx.send("This command can only be used in a tier channel.", delete_after=10)
             return
 
-        tier = channel_name.split("tier-", 1)[1].upper()
+        tier = tier_match.group(1).upper()
         if tier not in channels:
             await ctx.send(f"Unknown tier channel: {ctx.channel.name}", delete_after=10)
             return
@@ -218,7 +220,22 @@ class Tables(commands.Cog):
         result_embed.set_image(url="attachment://MogiTable.png")
 
         tier_channel = ctx.guild.get_channel(channels[tier.upper()])
-        table_msg    = await tier_channel.send(file=f, embed=result_embed)
+        try:
+            if tier_channel is None:
+                raise ValueError(f"No channel found for tier {tier}")
+            table_msg = await tier_channel.send(file=f, embed=result_embed)
+        except (discord.HTTPException, aiohttp.ClientError, OSError) as exc:
+            try:
+                db = await aiosqlite.connect('updating.db')
+                c = await db.cursor()
+                await c.execute("DELETE FROM tables WHERE tableid = ?", (new_id,))
+                await db.commit()
+            except Exception:
+                pass
+            finally:
+                await db.close()
+            await ctx.send(f"Failed to post the table to Discord because of a network/SSL error: {exc}")
+            return
 
         await embedded.delete()
 

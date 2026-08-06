@@ -46,9 +46,6 @@ class KOLoungeBot(commands.Bot):
         guild = discord.Object(id=self.config["server"])
         synced = await self.tree.sync(guild=guild)
         logger.info(f"Synced {len(synced)} application commands to guild {guild.id}")
-        logger.info("Registered commands:")
-        for cmd in self.tree.get_commands(guild=guild):
-            logger.info(f"- {cmd.name}")
 
     async def on_ready(self):
         logger.info(f"Logged in as {self.user} (ID: {self.user.id})")

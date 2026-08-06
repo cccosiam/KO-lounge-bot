@@ -17,7 +17,10 @@ profanity.load_censor_words(whitelist_words=profanity_whitelist)
 PLAYER_ROLE_ID = key_roles["player"]
 VERIFY_CHANNEL_ID = key_channels["verify"]
 PENDING_VERIFY_CHANNEL_ID = key_channels["pending_verification"]
-MKC_PROFILE_REGEX = re.compile(r"https://mkcentral\.com/registry/players/profile\?id=(\d+)", re.IGNORECASE)
+MKC_PROFILE_REGEX = re.compile(
+    r"https?://(?:www\.)?mkcentral\.com(?:/[a-z]{2}(?:-[a-z]{2})?)?/registry/players/profile\?id=(\d+)",
+    re.IGNORECASE,
+)
 MKC_API_BASE = "https://mkcentral.com/api/registry/players/{player_id}"
 NICKNAME_REGEX = re.compile(r"^(?=.*[A-Za-z])(?=.{2,16})[A-Za-z0-9]+( [A-Za-z0-9]+)*$")
 
