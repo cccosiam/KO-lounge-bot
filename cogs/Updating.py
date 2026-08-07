@@ -17,8 +17,9 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import asyncio
 import random
+import sqlite3
 
-from constants import (channels, key_channels, ranks, getRank,
+from constants import (channels, key_channels, key_roles, ranks, getRank,
                        SH_KEY, updateCols, getCols,
                        peakColumn, rowOffset, colOffset,
                        sheet_start_rows,
@@ -40,19 +41,47 @@ def get_creds():
     )
 agcm = gspread_asyncio.AsyncioGspreadClientManager(get_creds)
 
-def findmember(ctx, name, roleid):
+from constants import key_roles
+
+def findmember(ctx, name):
     members = ctx.guild.members
-    role = ctx.guild.get_role(roleid)
+    player_role = ctx.guild.get_role(key_roles["player"])
+    target_name = (name or "").strip().lower()
+
     def pred(m):
-        if m.nick is not None:
-            if m.nick.lower() == name.lower():
-                return True
-        if m.name.lower() != name.lower():
+        # Only consider verified players
+        if player_role not in m.roles:
             return False
-        if role not in m.roles:
-            return False
-        return True
+
+        candidate_names = []
+        if m.display_name:
+            candidate_names.append(m.display_name)
+        if m.nick:
+            candidate_names.append(m.nick)
+        if m.name:
+            candidate_names.append(m.name)
+
+        normalized_candidates = {
+            candidate.strip().lower()
+            for candidate in candidate_names
+            if candidate and candidate.strip()
+        }
+
+        return target_name in normalized_candidates
+
     return discord.utils.find(pred, members)
+
+def _rank_change_label(old_rank: str, new_rank: str) -> str:
+    rank_order = {rank_name: index for index, rank_name in enumerate(ranks.keys())}
+    old_index = rank_order.get(old_rank, len(rank_order))
+    new_index = rank_order.get(new_rank, len(rank_order))
+
+    if new_index < old_index:
+        return f"{new_rank}"
+    if new_index > old_index:
+        return f"{new_rank}"
+    return ""
+
 
 def _generate_mmr_table_image(
     size: int,
@@ -65,6 +94,7 @@ def _generate_mmr_table_image(
     new_mmrs: list,
     races: int,
     id_num: int,
+    promotion_labels: list | None = None,
     output_filename: str = "MMRTable.png"
 ) -> Path:
     """
@@ -100,7 +130,7 @@ def _generate_mmr_table_image(
         change = mmr_changes[i]
         row.append(f"+{change}" if isinstance(change, int) and change > 0 else str(change))
         row.append(new_mmrs[i])
-        row.append("") # TODO: Add promotions logic when implemented
+        row.append(promotion_labels[i] if promotion_labels and i < len(promotion_labels) else "")
         table_data.append(row)
 
     color_bg = "#241C3D" # Dark purple
@@ -129,7 +159,7 @@ def _generate_mmr_table_image(
         3: 0.12,  # Old MMR
         4: 0.09,  # Change
         5: 0.12,  # New MMR
-        6: 0.15   # Promotions
+        6: 0.20   # Promotions
     }
 
     header_color = '#3A2E62'  # Dark Purple
@@ -193,6 +223,43 @@ class Updating(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.config = bot.config 
+
+    async def _apply_rank_change_for_player(self, ctx, player_name: str, old_mmr, new_mmr):
+        try:
+            old_mmr_value = int(old_mmr)
+            new_mmr_value = int(new_mmr)
+        except (TypeError, ValueError):
+            return ""
+
+        old_rank = getRank(old_mmr_value)
+        new_rank = getRank(new_mmr_value)
+        if old_rank == new_rank:
+            return ""
+
+        label = _rank_change_label(old_rank, new_rank)
+        member = findmember(ctx, player_name)
+        if member is None:
+            return f"{player_name} — {label}"
+
+        new_role = ctx.guild.get_role(ranks[new_rank]["roleid"])
+        if new_role is None:
+            return f"{member.mention} — {label}"
+
+        for rank_name, rank_data in ranks.items():
+            role = ctx.guild.get_role(rank_data["roleid"])
+            if role and role in member.roles and role.id != new_role.id:
+                try:
+                    await member.remove_roles(role, reason="MMR rank update")
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+
+        try:
+            if new_role not in member.roles:
+                await member.add_roles(new_role, reason="MMR rank update")
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+
+        return f"{member.mention} — {label}"
 
     async def _approve_table_internal(self, ctx, table, extraArgs=""):
         """Internal helper to process the approval logic for a single table row."""
@@ -352,6 +419,21 @@ class Updating(commands.Cog):
 
         image_output_path = Path("MMRTable.png")
         
+        promotion_labels = []
+        for i in range(num_players):
+            rank1 = getRank(int(oldMMRs[i]))
+            rank2 = getRank(int(newMMRs[i]))
+            if rank1 != rank2:
+                promotion_labels.append(_rank_change_label(rank1, rank2))
+                await self._apply_rank_change_for_player(
+                    ctx,
+                    goodNames[i],
+                    oldMMRs[i],
+                    newMMRs[i],
+                )
+            else:
+                promotion_labels.append("")
+
         try:
             loop = asyncio.get_running_loop()
             image_generation_task = functools.partial(
@@ -366,6 +448,7 @@ class Updating(commands.Cog):
                 new_mmrs=newMMRs,
                 races=races,
                 id_num=idNum,
+                promotion_labels=promotion_labels,
                 output_filename=image_output_path
             )
             await loop.run_in_executor(None, image_generation_task)
@@ -376,26 +459,6 @@ class Updating(commands.Cog):
             await msg.delete()
             raise
 
-        rankchanges = ""
-        for i in range(num_players):
-            rank1 = getRank(int(oldMMRs[i]))
-            rank2 = getRank(int(newMMRs[i]))
-            if rank1 != rank2:
-                member = findmember(ctx, goodNames[i], ranks[rank1]["roleid"])
-                if member is not None:
-                    memName = member.mention
-                else:
-                    memName = goodNames[i]
-                rankchanges += (f"{memName} -> {ranks[rank2]['emoji']}\n")
-                
-                if member is not None:
-                    role1 = ctx.guild.get_role(ranks[rank1]["roleid"])
-                    role2 = ctx.guild.get_role(ranks[rank2]["roleid"])
-                    if role1 and role1 in member.roles:
-                        await member.remove_roles(role1)
-                    if role2 and role2 not in member.roles:
-                        await member.add_roles(role2)
-       
         await pHistory.batch_update(updateCells)
         await msg.delete()
 
@@ -436,21 +499,28 @@ class Updating(commands.Cog):
         
         e.set_image(url="attachment://MMRTable.png")
         
-        sentmsg = await channel.send(content=rankchanges, file=f, embed=e)
+        sentmsg = await channel.send(file=f, embed=e)
         
         rowNumStr = ",".join([str(rowNum) for rowNum in rowNums])
         colNumStr = ",".join([str(colNum) for colNum in colNums])
         peakChangesStr = ",".join([",".join(map(str, change)) for change in peakChanges])
+        oldmmrs_str = ",".join(str(val) for val in oldMMRs)
+        newmmrs_str = ",".join(str(val) for val in newMMRs)
         msgid_for_db = sentmsg.id
-        db_entry = (idNum, rowNumStr, colNumStr, peakChangesStr, msgid_for_db, tier.upper())
+        db_entry = (idNum, rowNumStr, colNumStr, peakChangesStr, msgid_for_db, tier.upper(), oldmmrs_str, newmmrs_str)
         
         db = None 
         try:
             db = await aiosqlite.connect('updating.db')
             c = await db.cursor()
+            for column_name in ("oldmmrs", "newmmrs"):
+                try:
+                    await c.execute(f"ALTER TABLE updated ADD COLUMN {column_name} TEXT DEFAULT ''")
+                except sqlite3.OperationalError:
+                    pass
             await c.execute("""INSERT INTO updated
-                            (tableid, rowids, colids, peakChanges, msgid, tier)
-                            VALUES (?,?,?,?,?,?)
+                            (tableid, rowids, colids, peakChanges, msgid, tier, oldmmrs, newmmrs)
+                            VALUES (?,?,?,?,?,?,?,?)
                             """, db_entry)
             await db.commit()
             # Post to updating log if configured
@@ -889,6 +959,8 @@ class Updating(commands.Cog):
             peakchanges = table[3].split(",")
             msgid = table[4]
             tier = table[5]
+            oldmmrs = table[6].split(",") if len(table) > 6 and table[6] else []
+            newmmrs = table[7].split(",") if len(table) > 7 and table[7] else []
             clearedCells = []
             for i in range(num_players):
                 clearCell = {'range': rowcol_to_a1(int(rowids[i])+rowOffset, int(colids[i])+colOffset),
@@ -903,6 +975,27 @@ class Updating(commands.Cog):
                 peakCell = {'range': f"{peakColumn}{int(peakchanges[2*i])}",
                             'values': [[oldpeak]]}
                 clearedCells.append(peakCell)
+            player_names = []
+            for i in range(num_players):
+                row_num = int(rowids[i]) + rowOffset
+                name_value = ""
+                for name_col in (1, int(colids[i]) + colOffset - 1):
+                    name_cell = await pHistory.acell(rowcol_to_a1(row_num, name_col))
+                    if name_cell.value and str(name_cell.value).strip():
+                        name_value = str(name_cell.value).strip()
+                        break
+                player_names.append(name_value)
+
+            for i, player_name in enumerate(player_names):
+                if not player_name or not oldmmrs or not newmmrs or i >= len(oldmmrs) or i >= len(newmmrs):
+                    continue
+                await self._apply_rank_change_for_player(
+                    ctx,
+                    player_name,
+                    newmmrs[i],
+                    oldmmrs[i],
+                )
+
             # Use separate request payload copies for each worksheet to avoid gspread mutating the shared list
             await pHistory.batch_update(
                 [{'range': cell['range'], 'values': cell['values']} for cell in clearedCells]
@@ -1011,9 +1104,17 @@ class Updating(commands.Cog):
             clear_range = rowcol_to_a1(matched_row, matched_col)
             clear_payload = [{'range': clear_range, 'values': [['']]}]
 
-            await pHistory.batch_update(
-                [{'range': cell['range'], 'values': cell['values']} for cell in clearedCells]
-            )
+            oldmmrs = table[6].split(",") if len(table) > 6 and table[6] else []
+            newmmrs = table[7].split(",") if len(table) > 7 and table[7] else []
+            if matched_index is not None and matched_index < len(oldmmrs) and matched_index < len(newmmrs):
+                await self._apply_rank_change_for_player(
+                    ctx,
+                    playerName,
+                    newmmrs[matched_index],
+                    oldmmrs[matched_index],
+                )
+
+            await pHistory.batch_update(clear_payload)
             # Log to results channel
             channel = ctx.guild.get_channel(channels[tier.upper()])
             if channel:

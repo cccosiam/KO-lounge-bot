@@ -8,7 +8,7 @@ from typing import Optional
 import gspread_asyncio
 from oauth2client.service_account import ServiceAccountCredentials
 from better_profanity import profanity
-from constants import key_channels, key_roles, base_MMR, profanity_whitelist, profanity_blacklist, SH_KEY
+from constants import key_channels, key_roles, base_MMR, profanity_whitelist, profanity_blacklist, SH_KEY, getRank, ranks
 
 profanity.load_censor_words()
 #profanity.add_censor_words(blacklist_words=profanity_blacklist)
@@ -232,6 +232,42 @@ class Verification(commands.Cog):
         except Exception:
             return False
 
+    async def assign_rank_role(self, member: discord.Member, mmr: int | None = None) -> None:
+        if mmr is None:
+            target_rank = "Silver 2"
+        else:
+            target_rank = getRank(mmr)
+
+        role_ids = {rank_data["roleid"] for rank_data in ranks.values()}
+        for role_id in role_ids:
+            role = member.guild.get_role(role_id)
+            if role and role in member.roles:
+                await member.remove_roles(role)
+
+        target_role = member.guild.get_role(ranks[target_rank]["roleid"])
+        if target_role and target_role not in member.roles:
+            await member.add_roles(target_role, reason="Rank assignment")
+
+    async def get_player_mmr(self, player_id: int) -> int | None:
+        try:
+            agc = await agcm.authorize()
+            sh = await agc.open_by_key(SH_KEY)
+            player_history_ws = await sh.worksheet("Player History")
+            mkc_ids = await player_history_ws.col_values(2)
+
+            for idx, existing_id in enumerate(mkc_ids[1:], start=2):
+                if str(existing_id).strip() != str(player_id):
+                    continue
+
+                mmr_cell = await player_history_ws.acell(f"C{idx}")
+                mmr_value = mmr_cell.value
+                if mmr_value is not None and str(mmr_value).strip():
+                    return int(float(str(mmr_value).strip()))
+                return None
+
+            return None
+        except Exception:
+            return None
 
     async def process_verification(
         self,
@@ -502,6 +538,12 @@ class Verification(commands.Cog):
             except discord.HTTPException as exc:
                 errors.append(f"Failed to set nickname: `{exc}`")
 
+            if is_returning:
+                mmr = await self.get_player_mmr(player_id)
+                await self.assign_rank_role(member, mmr)
+            else:
+                await self.assign_rank_role(member, None)
+
             mkc_name = player_data.get("name", f"#{player_id}")
 
             if errors:
@@ -516,7 +558,7 @@ class Verification(commands.Cog):
                     )
                 )
                 log_success = True
-                log_reason  = f"Verified as **{mkc_name}** (#{player_id}) — role/nickname errors:\n{warning_text}"
+                log_reason = f"Verified as **{mkc_name}** (#{player_id}) — role/nickname errors:\n{warning_text}"
 
             elif is_returning:
                 await pending_msg.edit(
@@ -528,7 +570,7 @@ class Verification(commands.Cog):
                     )
                 )
                 log_success = True
-                log_reason  = f"Verified as **{mkc_name}** (#{player_id}) — returning player"
+                log_reason = f"Verified as **{mkc_name}** (#{player_id}) — returning player"
             else:
                 await pending_msg.edit(
                     embed=success_embed(
@@ -539,7 +581,7 @@ class Verification(commands.Cog):
                     )
                 )
                 log_success = True
-                log_reason  = f"Verified as **{mkc_name}** (#{player_id}) — new player"
+                log_reason = f"Verified as **{mkc_name}** (#{player_id}) — new player"
 
         finally:
             self._in_progress.discard(member.id)
@@ -656,6 +698,12 @@ class Verification(commands.Cog):
                 role_errors.append("Could not set nickname (insufficient permissions).")
             except discord.HTTPException as exc:
                 role_errors.append(f"Nickname update failed: `{exc}`")
+
+            if is_returning:
+                mmr = await self.get_player_mmr(player_id)
+                await self.assign_rank_role(member, mmr)
+            else:
+                await self.assign_rank_role(member, None)
  
             # ── DM the player ─────────────────────────────────────────────────
             try:

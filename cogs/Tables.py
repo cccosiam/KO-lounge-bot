@@ -62,9 +62,16 @@ class Tables(commands.Cog):
 
     @commands.command(name="table")
     @commands.max_concurrency(number=1, wait=True)
-    @commands.has_any_role("Administrator", "Updater", "Lounge Staff", "Reporter")
     @commands.cooldown(3, 60, commands.BucketType.member)
     async def table(self, ctx, *, data):
+        if not any(role.name in {"Administrator", "Updater", "Lounge Staff", "Reporter"} for role in ctx.author.roles):
+            await ctx.send(
+                "You need the **Reporter** role to submit tables.\n"
+                "You can obtain it in the #self-roles channel.\n\n"
+                "集計を提出するにはReporterロールが必要です。\n"
+                "これは #self-roles から取得できます。"
+            )
+            return
 
         if ctx.guild.id != self.config["server"]:
             await ctx.send("You cannot use this command in this server!")
@@ -278,16 +285,12 @@ class Tables(commands.Cog):
 
     @table.error
     async def table_error(self, ctx, error):
-        if isinstance(error, commands.MissingAnyRole):
-            await ctx.send(
-                "You need the **Reporter** role to submit tables.\n"
-                "You can obtain it in the #self-roles channel.\n"
-                "集計を提出するにはReporterロールが必要です\nこれは #self-roles から取得できます。"
-            )
-        elif isinstance(error, commands.CommandOnCooldown):
-            await ctx.send(f"You're on cooldown. Try again in {error.retry_after:.0f}s.")
 
-    # ── Staff utility commands ────────────────────────────────────────────────
+        if isinstance(error, commands.CommandOnCooldown):
+            await ctx.send(f"You're on cooldown. Try again in {error.retry_after:.0f}s.")
+            return True
+
+        return False
 
     @commands.command()
     @commands.max_concurrency(number=1, wait=True)
