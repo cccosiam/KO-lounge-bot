@@ -231,6 +231,28 @@ class Verification(commands.Cog):
             return str(player_id) in [str(v) for v in mkc_id_col]
         except Exception:
             return False
+    
+    async def get_player_name(self, player_id: int) -> str | None:
+        try:
+            agc = await agcm.authorize()
+            sh = await agc.open_by_key(SH_KEY)
+            player_history_ws = await sh.worksheet("Player History")
+
+            mkc_ids = await player_history_ws.col_values(2)
+
+            for idx, existing_id in enumerate(mkc_ids[1:], start=2):
+                if str(existing_id).strip() != str(player_id):
+                    continue
+
+                name_cell = await player_history_ws.acell(f"A{idx}")
+                name = str(name_cell.value).strip() if name_cell.value else ""
+
+                return name or None
+
+            return None
+
+        except Exception:
+            return None
 
     async def assign_rank_role(self, member: discord.Member, mmr: int | None = None) -> None:
         if mmr is None:
@@ -504,6 +526,22 @@ class Verification(commands.Cog):
                 )
                 log_reason = "Failed to add player to sheet"
                 return
+
+            if is_returning:
+                existing_nickname = await self.get_player_name(player_id)
+
+                if not existing_nickname:
+                    await pending_msg.edit(
+                        embed=error_embed(
+                            "❌ Verification Failed",
+                            "Your MKCentral account is registered, but the existing player name "
+                            "could not be retrieved. Please contact an administrator.",
+                        )
+                    )
+                    log_reason = "Returning player detected but existing nickname could not be retrieved"
+                    return
+
+                nickname = existing_nickname
 
             if not await self.confirm_player_in_sheet(player_id):
                 await pending_msg.edit(

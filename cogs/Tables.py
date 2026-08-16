@@ -3,7 +3,9 @@ from discord.ext import commands
 
 import aiosqlite
 import gspread_asyncio
+import asyncio
 from oauth2client.service_account import ServiceAccountCredentials
+from collections import Counter
 
 import urllib
 import re
@@ -58,8 +60,6 @@ class Tables(commands.Cog):
             scores.append(self._sum_gps(parts[-1]))
         return players, scores
 
-    # ── Unified !table command ────────────────────────────────────────────────
-
     @commands.command(name="table")
     @commands.max_concurrency(number=1, wait=True)
     @commands.cooldown(3, 60, commands.BucketType.member)
@@ -82,7 +82,7 @@ class Tables(commands.Cog):
             return
 
         channel_name = (ctx.channel.name or "").lower()
-        tier_match = re.search(r"tier-([a-z0-9]+)", channel_name)
+        tier_match = re.search(r"tier-([a-z0-9]+)", channel_name)        
         if not tier_match:
             await ctx.send("This command can only be used in a tier channel.", delete_after=10)
             return
@@ -94,7 +94,6 @@ class Tables(commands.Cog):
 
         size = 1  # FFA only for now
 
-        # ── Parse score block ─────────────────────────────────────────────────
         players, scores = self._parse_lines(data)
         if len(players) != num_players:
             await ctx.send(f"Your table does not contain {num_players} valid score lines, try again!\nYou are missing {num_players - len(players)} player(s).")
@@ -107,10 +106,23 @@ class Tables(commands.Cog):
 
         is300 = sum(scores)
 
-        # ── Sort players by score descending, compute placements ──────────────
         paired = sorted(zip(scores, players), reverse=False)
         sorted_scores = [s for s, _ in paired]
         sorted_names  = [n for _, n in paired]
+
+        score_counts = Counter(sorted_scores)
+        duplicate_scores = [score for score, count in score_counts.items() if count > 1]
+
+        if duplicate_scores:
+            duplicate_scores.sort()
+
+            message = (
+                f"Two or more players have **{', '.join(map(str, duplicate_scores))}** as their score. " + 
+                "Please check your input and try again."
+            )
+
+            await ctx.send(message)
+            return
 
         placements = []
         for i, s in enumerate(sorted_scores):
@@ -120,7 +132,7 @@ class Tables(commands.Cog):
                 placements.append(placements[-1])
             else:
                 placements.append(i + 1)
-        # ── Sheets name lookup ────────────────────────────────────────────────
+
         agc = await agcm.authorize()
         sh  = await agc.open_by_key(LOOKUP_KEY)
         bot_sheet = await sh.worksheet("search")
@@ -144,7 +156,6 @@ class Tables(commands.Cog):
 
         sorted_scores.reverse()
 
-        # ── Build lorenzi image URL ───────────────────────────────────────────
         table_text = (
             "#hide playerScores\n"
             f"#title Tier {tier} FFA\n"
@@ -157,7 +168,31 @@ class Tables(commands.Cog):
             "https://gb2.hlorenzi.com/table.png?data="
             + urllib.parse.quote(table_text)
         )
-        # ── Send confirmation preview ─────────────────────────────────────────
+
+        # score_groups = defaultdict(list)
+        # for _name, _score, _placement in zip(sorted_names, sorted_scores, placements):
+        #     score_groups[_score].append((_name, _placement))
+
+        # tie_lines = []
+
+        # for _score, _group in score_groups.items():
+        #     if len(_group) > 1:
+        #         internal_pos = int(_group[0][1])
+        #         display_pos = (num_players) - internal_pos
+
+        #         tie_lines.append(
+        #             f"Two or more players have **{display_pos}** as their score. " + 
+        #             "Please check your input and try again."
+        #         )
+
+        # if tie_lines:
+        #     message = (
+        #         ""
+        #         + "\n".join(tie_lines)
+        #     )
+        #     await ctx.send(message)
+        #     return
+
         e = discord.Embed(title="Table")
         e.set_image(url=image_url)
         content = "Please react to this message with \U00002611 within the next 30 seconds to confirm the table is correct"
@@ -190,7 +225,6 @@ class Tables(commands.Cog):
             await embedded.delete()
             return
 
-        # ── Persist to DB ─────────────────────────────────────────────────────
         names_str  = ",".join(good_names)
         places_str = ",".join(str(p) for p in reversed(placements))
         db_entry   = (size, tier, names_str, places_str, image_url, 0, ctx.author.id)
@@ -211,7 +245,6 @@ class Tables(commands.Cog):
         finally:
             await db.close()
 
-        # ── Download image and post to tier channel ───────────────────────────
         async with aiohttp.ClientSession() as session:
             async with session.get(image_url) as resp:
                 if resp.status != 200:
@@ -291,6 +324,513 @@ class Tables(commands.Cog):
             return True
 
         return False
+
+    @commands.command(name="submit")
+    @commands.max_concurrency(number=1, wait=True)
+    @commands.cooldown(3, 60, commands.BucketType.member)
+    async def submit(self, ctx, size: int, *, data: str):
+        """
+        Submit a Squad Queue table.
+
+        Usage:
+            !submit 2
+            Team 1 - A
+            Player 1 105
+            Player 2 71
+
+            Team 2 - B
+            Player 3 97
+            Player 4 64
+        """
+
+        if not any(
+            role.name in {"Administrator", "Updater", "Lounge Staff", "Reporter"}
+            for role in ctx.author.roles
+        ):
+            await ctx.send(
+                "You need the **Reporter** role to submit tables.\n"
+                "You can obtain it in the #self-roles channel.\n\n"
+                "集計を提出するにはReporterロールが必要です。\n"
+                "これは #self-roles から取得できます。"
+            )
+            return
+
+        if ctx.guild.id != self.config["server"]:
+            await ctx.send("You cannot use this command in this server!")
+            return
+
+        if ctx.channel.id in general_channels.values():
+            await ctx.send(
+                "This command cannot be used outside a tier channel.",
+                delete_after=10
+            )
+            return
+
+        channel_name = (ctx.channel.name or "").lower()
+
+        if not channel_name.startswith("sq"):
+            await ctx.send(
+                "This command can only be used in an SQ thread.",
+                delete_after=10
+            )
+            return
+
+        tier = "SQ"
+
+        if size < 2:
+            await ctx.send(
+                "The Squad Queue format must contain at least 2 players per team."
+            )
+            return
+
+        # Parse teams
+        #
+        # Expected:
+        #
+        # Team 1 - A
+        # Kingcv 105
+        # Sushiberry 71
+        #
+        # Team 2 - B
+        # S.A.C 97
+        # B1aze 64
+        #
+        team_header_pattern = re.compile(
+            r"^\s*Team\s+\d+\s*-\s*(.+?)\s*$",
+            re.IGNORECASE
+        )
+
+        lines = [line.strip() for line in data.splitlines()]
+
+        teams = []
+        current_team = None
+
+        for line in lines:
+            if not line:
+                continue
+
+            team_match = team_header_pattern.match(line)
+
+            if team_match:
+                # Save previous team
+                if current_team is not None:
+                    teams.append(current_team)
+
+                tag = team_match.group(1).strip()
+
+                if not tag:
+                    await ctx.send(
+                        "A team is missing its tag. "
+                        "Please use the format `Team 1 - A`."
+                    )
+                    return
+
+                current_team = {
+                    "tag": tag,
+                    "players": []
+                }
+
+                continue
+
+            if current_team is None:
+                await ctx.send(
+                    "Invalid table format. "
+                    "Every player must belong to a team using a header such as "
+                    "`Team 1 - A`."
+                )
+                return
+
+            parts = line.rsplit(maxsplit=1)
+
+            if len(parts) != 2:
+                await ctx.send(
+                    f"Could not read this player line:\n`{line}`\n\n"
+                    "Each player must be written as `Player Name Score`."
+                )
+                return
+
+            player_name, score_text = parts
+
+            if not score_text.isdigit():
+                await ctx.send(
+                    f"Invalid score for **{player_name}**: `{score_text}`"
+                )
+                return
+
+            score = int(score_text)
+
+            if score < 0:
+                await ctx.send(
+                    f"Invalid score for **{player_name}**: `{score}`"
+                )
+                return
+
+            current_team["players"].append({
+                "name": player_name.strip(),
+                "score": score
+            })
+
+        if current_team is not None:
+            teams.append(current_team)
+
+        if not teams:
+            await ctx.send(
+                "No teams were found. Please use the format `Team 1 - A`."
+            )
+            return
+
+        tags = [team["tag"].casefold() for team in teams]
+
+        if len(tags) != len(set(tags)):
+            await ctx.send(
+                "Duplicate team tags are not allowed. "
+                "Every team must have a unique tag."
+            )
+            return
+
+        invalid_teams = []
+
+        for i, team in enumerate(teams, start=1):
+            if len(team["players"]) != size:
+                invalid_teams.append(
+                    f"Team **{team['tag']}** has {len(team['players'])} "
+                    f"player(s); expected {size}."
+                )
+
+        if invalid_teams:
+            await ctx.send(
+                "**Invalid Squad Queue table**\n\n"
+                + "\n".join(invalid_teams)
+            )
+            return
+
+        all_players = [
+            player
+            for team in teams
+            for player in team["players"]
+        ]
+
+        player_names = [player["name"] for player in all_players]
+        lower_names = [name.casefold() for name in player_names]
+
+        if len(set(lower_names)) != len(lower_names):
+            duplicates = sorted({
+                name
+                for name in lower_names
+                if lower_names.count(name) > 1
+            })
+
+            await ctx.send(
+                "Duplicate names are not allowed, please try again.\n"
+                f"Duplicate player(s): {', '.join(duplicates)}"
+            )
+            return
+
+        # ── Check players against your leaderboard sheet ─────────────────────────
+        agc = await agcm.authorize()
+        sh = await agc.open_by_key(LOOKUP_KEY)
+        bot_sheet = await sh.worksheet("search")
+
+        # Your FFA implementation uses B9:B32.
+        # SQ can contain a different number of players, so calculate the range.
+        start_row = 9
+        end_row = start_row + len(player_names) - 1
+
+        await bot_sheet.batch_update([{
+            "range": f"B{start_row}:B{end_row}",
+            "values": [[name] for name in player_names],
+        }])
+
+        got_batch = await bot_sheet.batch_get(
+            [f"C{start_row}:C{end_row}"]
+        )
+
+        good_names = [
+            got_batch[0][i][0]
+            for i in range(len(player_names))
+        ]
+
+        errors = "\n".join(
+            f"Player **{player_names[i]}** is not on the leaderboard; "
+            "check your input"
+            for i in range(len(player_names))
+            if good_names[i] == "N/A"
+        )
+
+        if errors:
+            await ctx.send(errors)
+            return
+
+        # ── Build Lorenzi SQ table ────────────────────────────────────────────────
+        #
+        # IMPORTANT:
+        # This is intentionally kept separate from the FFA code.
+        #
+        # Unlike !table:
+        #   - scores are NOT reversed
+        #   - players remain grouped by team
+        #   - team tags are preserved
+        #
+        # Replace this section with the exact SQ Lorenzi syntax once confirmed.
+        #
+        table_text = (
+            f"#title Tier {tier}\n"
+            "Results #FFAC1C\n"
+        )
+
+        for team, team_good_names in zip(
+            teams,
+            [
+                good_names[
+                    sum(len(t["players"]) for t in teams[:i]):
+                    sum(len(t["players"]) for t in teams[:i + 1])
+                ]
+                for i in range(len(teams))
+            ]
+        ):
+            table_text += f"{team['tag']}\n"
+
+            for player, good_name in zip(team["players"], team_good_names):
+                table_text += f"{good_name} {player['score']}\n"
+
+        image_url = (
+            "https://gb2.hlorenzi.com/table.png?data="
+            + urllib.parse.quote(table_text)
+        )
+
+        e = discord.Embed(title="SQ Table")
+        e.set_image(url=image_url)
+
+        content = (
+            "Please react to this message with ☑️ within the next "
+            "30 seconds to confirm the table is correct"
+        )
+
+        embedded = await ctx.send(content=content, embed=e)
+
+        CHECK_BOX = "\U00002611"
+        X_MARK = "\U0000274C"
+
+        await embedded.add_reaction(CHECK_BOX)
+        await embedded.add_reaction(X_MARK)
+
+        def check(reaction, user):
+            return (
+                user == ctx.author
+                and reaction.message.id == embedded.id
+                and str(reaction.emoji) in (CHECK_BOX, X_MARK)
+            )
+
+        try:
+            reaction, _ = await self.bot.wait_for(
+                "reaction_add",
+                timeout=30.0,
+                check=check
+            )
+        except asyncio.TimeoutError:
+            await embedded.delete()
+            return
+
+        if str(reaction.emoji) == X_MARK:
+            await embedded.delete()
+            return
+
+        # ── Persist to DB ────────────────────────────────────────────────────────
+        #
+        # SQ scores are kept in their original order.
+        #
+        names_str = ",".join(good_names)
+
+        # For now, store the players in team order. The placement field can
+        # be adapted once the SQ updating logic is defined.
+        places_str = ",".join(
+            team["tag"]
+            for team in teams
+        )
+
+        db_entry = (
+            size,
+            tier,
+            names_str,
+            places_str,
+            image_url,
+            0,
+            ctx.author.id
+        )
+
+        try:
+            db = await aiosqlite.connect("updating.db")
+            c = await db.cursor()
+
+            await c.execute(
+                """
+                INSERT INTO tables
+                    (size, tier, names, placements, tableurl, messageid, authorid)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                db_entry,
+            )
+
+            new_id = c.lastrowid
+            await db.commit()
+
+        except Exception as exc:
+            print(exc)
+            return
+
+        finally:
+            await db.close()
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(image_url) as resp:
+
+                if resp.status != 200:
+                    await ctx.send("Could not download the table image.")
+                    return
+
+                file_data = io.BytesIO(await resp.read())
+                f = discord.File(file_data, filename="MogiTable.png")
+
+        # ── Build result embed ───────────────────────────────────────────────────
+        result_embed = discord.Embed(
+            title="SQ Table",
+            colour=int("625B09", 16)
+        )
+
+        result_embed.add_field(name="ID", value=new_id)
+        result_embed.add_field(name="Tier", value=tier)
+        result_embed.add_field(
+            name="Format",
+            value=f"{size}v{size}"
+        )
+        result_embed.add_field(
+            name="Submitted by",
+            value=ctx.author.mention
+        )
+
+        result_embed.set_image(url="attachment://MogiTable.png")
+
+        # ── Post to tier channel ────────────────────────────────────────────────
+        tier_channel = ctx.guild.get_channel(channels[tier.upper()])
+
+        try:
+            if tier_channel is None:
+                raise ValueError(f"No channel found for tier {tier}")
+
+            table_msg = await tier_channel.send(
+                file=f,
+                embed=result_embed
+            )
+
+        except (discord.HTTPException, aiohttp.ClientError, OSError) as exc:
+
+            try:
+                db = await aiosqlite.connect("updating.db")
+                c = await db.cursor()
+
+                await c.execute(
+                    "DELETE FROM tables WHERE tableid = ?",
+                    (new_id,)
+                )
+
+                await db.commit()
+
+            except Exception:
+                pass
+
+            finally:
+                await db.close()
+
+            await ctx.send(
+                "Failed to post the table to Discord because of a "
+                f"network/SSL error: {exc}"
+            )
+            return
+
+        await embedded.delete()
+
+        if tier_channel.id != ctx.channel.id:
+            await ctx.send(
+                f"Successfully sent table to {tier_channel.mention} "
+                f"`(ID: {new_id})`"
+            )
+        else:
+            await ctx.message.delete()
+
+        # ── Update DB with Discord message ID ────────────────────────────────────
+        try:
+            db = await aiosqlite.connect("updating.db")
+            c = await db.cursor()
+
+            await c.execute(
+                "UPDATE tables SET messageid = ? WHERE tableid = ?",
+                (table_msg.id, new_id),
+            )
+
+            await db.commit()
+
+        except Exception as exc:
+            print(exc)
+
+        finally:
+            await db.close()
+
+        # ── Updating log ─────────────────────────────────────────────────────────
+        try:
+            log_channel_id = key_channels.get("updating_log", 0)
+
+            if log_channel_id:
+                log_channel = ctx.guild.get_channel(log_channel_id)
+
+                if log_channel:
+                    le = discord.Embed(
+                        title="Squad Queue Table Submitted",
+                        color=discord.Color.gold()
+                    )
+
+                    le.add_field(
+                        name="ID",
+                        value=str(new_id),
+                        inline=True
+                    )
+
+                    le.add_field(
+                        name="Tier",
+                        value=tier,
+                        inline=True
+                    )
+
+                    le.add_field(
+                        name="Format",
+                        value=f"{size}v{size}",
+                        inline=True
+                    )
+
+                    le.add_field(
+                        name="Submitted by",
+                        value=ctx.author.mention,
+                        inline=True
+                    )
+
+                    try:
+                        le.add_field(
+                            name="Message Link",
+                            value=f"[Link]({table_msg.jump_url})",
+                            inline=False
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"Error adding message link to log: {e}",
+                            exc_info=True
+                        )
+
+                    await log_channel.send(embed=le)
+
+        except Exception as e:
+            logger.error(
+                f"Error sending SQ table submission log: {e}",
+                exc_info=True
+            )
 
     @commands.command()
     @commands.max_concurrency(number=1, wait=True)
