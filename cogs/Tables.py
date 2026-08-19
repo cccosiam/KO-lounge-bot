@@ -478,6 +478,12 @@ class Tables(commands.Cog):
                 "No teams were found. Please use the format `Team 1 - A`."
             )
             return
+        
+        is1550 = sum(
+            player["score"]
+            for team in teams
+            for player in team["players"]
+            )
 
         tags = [team["tag"].casefold() for team in teams]
 
@@ -526,13 +532,10 @@ class Tables(commands.Cog):
             )
             return
 
-        # ── Check players against your leaderboard sheet ─────────────────────────
         agc = await agcm.authorize()
         sh = await agc.open_by_key(LOOKUP_KEY)
         bot_sheet = await sh.worksheet("search")
 
-        # Your FFA implementation uses B9:B32.
-        # SQ can contain a different number of players, so calculate the range.
         start_row = 9
         end_row = start_row + len(player_names) - 1
 
@@ -561,18 +564,6 @@ class Tables(commands.Cog):
             await ctx.send(errors)
             return
 
-        # ── Build Lorenzi SQ table ────────────────────────────────────────────────
-        #
-        # IMPORTANT:
-        # This is intentionally kept separate from the FFA code.
-        #
-        # Unlike !table:
-        #   - scores are NOT reversed
-        #   - players remain grouped by team
-        #   - team tags are preserved
-        #
-        # Replace this section with the exact SQ Lorenzi syntax once confirmed.
-        #
         table_text = (
             f"#title Tier {tier}\n"
             "Results #FFAC1C\n"
@@ -605,6 +596,11 @@ class Tables(commands.Cog):
             "Please react to this message with ☑️ within the next "
             "30 seconds to confirm the table is correct"
         )
+        if is1550 != 1550:
+            e.add_field(
+                name="⚠️ Warning",
+                value=f"The total score of {is1550} might be incorrect! Most tables should add up to 1550 points. Please check your input for duplicate scores.",
+            )
 
         embedded = await ctx.send(content=content, embed=e)
 
@@ -635,17 +631,13 @@ class Tables(commands.Cog):
             await embedded.delete()
             return
 
-        # ── Persist to DB ────────────────────────────────────────────────────────
-        #
-        # SQ scores are kept in their original order.
-        #
         names_str = ",".join(good_names)
 
-        # For now, store the players in team order. The placement field can
-        # be adapted once the SQ updating logic is defined.
+        # For SQ, store each player's score in the placements field.
         places_str = ",".join(
-            team["tag"]
+            str(player["score"])
             for team in teams
+            for player in team["players"]
         )
 
         db_entry = (

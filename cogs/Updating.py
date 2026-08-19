@@ -71,6 +71,9 @@ def findmember(ctx, name):
 
     return discord.utils.find(pred, members)
 
+# def _get_tier(rank_name: str) -> str:
+#     return rank_name.rsplit(" ", 1)[0] if rank_name[-1].isdigit() else rank_name
+
 def _rank_change_label(old_rank: str, new_rank: str) -> str:
     rank_order = {rank_name: index for index, rank_name in enumerate(ranks.keys())}
     old_index = rank_order.get(old_rank, len(rank_order))
@@ -124,6 +127,11 @@ def _generate_mmr_table_image(
             row.append("")
 
         row.append(good_names[i])
+        # if tier.upper() == "SQ":
+        #     if scores is not None and i < len(scores):
+        #         row.append(scores[i])
+        #     else:
+        #         row.append("-")
         peak_val = peak_mmrs[i] if i < len(peak_mmrs) else "N/A"
         row.append(peak_val if peak_val != "N/A" else "-")
         row.append(old_mmrs[i])
@@ -198,7 +206,8 @@ def _generate_mmr_table_image(
                 raw_text = cell.get_text().get_text()
                 try:
                     val = int(raw_text.replace('+', '').replace(' ', ''))
-                    intensity = min(abs(val) / 75.0, 1.0)
+                    max_change = 200 if tier.upper() == "SQ" else 75
+                    intensity = min(abs(val) / max_change, 1.0)
                     if val > 0:
                         new_color = [NEUTRAL_WHITE[i] + (MAX_GREEN[i] - NEUTRAL_WHITE[i]) * intensity for i in range(3)]
                     elif val < 0:
@@ -208,8 +217,8 @@ def _generate_mmr_table_image(
                     cell.get_text().set_color(new_color)
                 except ValueError:
                     cell.get_text().set_color(NEUTRAL_WHITE)
-
-    plt.title(f"Tier {tier.upper()} Free For All Results", fontsize=18, pad=13, color=text_white)
+    format_label = "Free For All" if size == 1 else f"{size}v{size}"
+    plt.title(f"Tier {tier.upper()} {format_label} Results", fontsize=18, pad=13, color=text_white)
     plt.figtext(0.5, 0.085, f"ID: {id_num}  |  Rallies: {races}  |  Updated on {date.today()}", 
                 ha="center", color=text_white, fontsize=11, bbox={"facecolor":"#121212", "alpha":0.2, "pad":5})
 
@@ -233,33 +242,46 @@ class Updating(commands.Cog):
 
         old_rank = getRank(old_mmr_value)
         new_rank = getRank(new_mmr_value)
-        if old_rank == new_rank:
-            return ""
 
-        label = _rank_change_label(old_rank, new_rank)
+        label = ""
+        if old_rank != new_rank:
+            label = _rank_change_label(old_rank, new_rank)
+
         member = findmember(ctx, player_name)
+
         if member is None:
-            return f"{player_name} — {label}"
+            return f"{player_name} — {label}" if label else ""
 
         new_role = ctx.guild.get_role(ranks[new_rank]["roleid"])
+
         if new_role is None:
-            return f"{member.mention} — {label}"
+            return f"{member.mention} — {label}" if label else ""
 
         for rank_name, rank_data in ranks.items():
             role = ctx.guild.get_role(rank_data["roleid"])
+
             if role and role in member.roles and role.id != new_role.id:
                 try:
-                    await member.remove_roles(role, reason="MMR rank update")
+                    await member.remove_roles(
+                        role,
+                        reason="MMR rank verification"
+                    )
                 except (discord.Forbidden, discord.HTTPException):
                     pass
 
-        try:
-            if new_role not in member.roles:
-                await member.add_roles(new_role, reason="MMR rank update")
-        except (discord.Forbidden, discord.HTTPException):
-            pass
+        if new_role not in member.roles:
+            try:
+                await member.add_roles(
+                    new_role,
+                    reason="MMR rank verification"
+                )
+            except (discord.Forbidden, discord.HTTPException):
+                pass
 
-        return f"{member.mention} — {label}"
+        if label:
+            return f"{member.mention} — {label}"
+
+        return ""
 
     async def _approve_table_internal(self, ctx, table, extraArgs=""):
         """Internal helper to process the approval logic for a single table row."""
@@ -271,10 +293,12 @@ class Updating(commands.Cog):
         
         arguments = extraArgs.split(";") if extraArgs else []
         instructions = {}
-        
+        races = 1
+
         if tier == "SQ":
-            for i in range(size):
-                instructions[i+1] = 0.75
+            # for i in range(size):
+            #     instructions[i+1] = 3.33
+            races = 5
         elif len(arguments) > 0:
             try:
                 instructions = await self.processInstructions(ctx, tier, arguments[0])
@@ -282,7 +306,7 @@ class Updating(commands.Cog):
                 return False
 
         mults = [instructions.get(i+1, 1) for i in range(size)]
-        races = 1
+
         if len(arguments) > 1:
             try:
                 raceArg = int(arguments[1])
@@ -327,6 +351,37 @@ class Updating(commands.Cog):
         
         channel = ctx.guild.get_channel(channels[tier.upper()])
         start = sheet_start_rows[size]
+
+        if tier.upper() == "SQ":
+            team_scores = [
+                sum(int(score) for score in placements[i:i + size])
+                for i in range(0, len(placements), size)
+            ]
+
+            sorted_team_scores = sorted(team_scores, reverse=True)
+
+            team_placements = [
+                sorted_team_scores.index(score) + 1
+                for score in team_scores
+            ]
+
+            sorted_teams = sorted(
+                zip(team_placements, team_scores, range(len(team_placements))),
+                key=lambda x: x[0]
+            )
+            print(sorted_teams)
+
+            placements = [team[0] for team in sorted_teams]
+            print(placements)
+
+            sorted_names = []
+            for _, _, team_index in sorted_teams:
+                team_start = team_index * size
+                sorted_names.extend(
+                    names[team_start:team_start + size]
+                )
+
+            names = sorted_names
               
         updateCells = [{
             'range': f"{updateCols[0]}{start}:{updateCols[0]}{start+num_players-1}",
@@ -494,8 +549,8 @@ class Updating(commands.Cog):
             for i in range(num_players):
                 if mults[i] != 1:
                     lossMultStr += (f"{mults[i]:.2f}x MMR multiplier for {goodNames[i]}\n")
-        if lossMultStr:
-            e.add_field(name="Notes", value=lossMultStr, inline=False)
+        # if lossMultStr:
+            # e.add_field(name="Notes", value=lossMultStr, inline=False)
         
         e.set_image(url="attachment://MMRTable.png")
         
@@ -504,10 +559,11 @@ class Updating(commands.Cog):
         rowNumStr = ",".join([str(rowNum) for rowNum in rowNums])
         colNumStr = ",".join([str(colNum) for colNum in colNums])
         peakChangesStr = ",".join([",".join(map(str, change)) for change in peakChanges])
+        placements_str = ",".join(str(p) for p in placements)
         oldmmrs_str = ",".join(str(val) for val in oldMMRs)
         newmmrs_str = ",".join(str(val) for val in newMMRs)
         msgid_for_db = sentmsg.id
-        db_entry = (idNum, rowNumStr, colNumStr, peakChangesStr, msgid_for_db, tier.upper(), oldmmrs_str, newmmrs_str)
+        db_entry = (idNum, rowNumStr, colNumStr, peakChangesStr, msgid_for_db, tier.upper(), placements_str, oldmmrs_str, newmmrs_str)
         
         db = None 
         try:
@@ -519,8 +575,8 @@ class Updating(commands.Cog):
                 except sqlite3.OperationalError:
                     pass
             await c.execute("""INSERT INTO updated
-                            (tableid, rowids, colids, peakChanges, msgid, tier, oldmmrs, newmmrs)
-                            VALUES (?,?,?,?,?,?,?,?)
+                            (tableid, rowids, colids, peakChanges, msgid, tier, placements, oldmmrs, newmmrs)
+                            VALUES (?,?,?,?,?,?,?,?,?)
                             """, db_entry)
             await db.commit()
             # Post to updating log if configured
@@ -546,6 +602,8 @@ class Updating(commands.Cog):
         finally:
             if db: await db.close()
 
+            
+
     @commands.max_concurrency(number=1, wait=True)
     @commands.group(aliases=['u'])
     @commands.has_any_role("Administrator", "Updater", "Lounge Staff")
@@ -553,6 +611,7 @@ class Updating(commands.Cog):
         if ctx.invoked_subcommand is None:
             await ctx.send("Please specify a subcommand like `approve`, `deny`, `text`, etc.", delete_after=10)
             return
+
 
     # @commands.max_concurrency(number=1, wait=True)
     # @update.command(aliases=['a'])
@@ -636,9 +695,12 @@ class Updating(commands.Cog):
             
         arguments = extraArgs.split(";")
         instructions = {}
+        races = 1
+
         if tier.upper() == "SQ":
-            for i in range(num_players):
-                instructions[i+1] = 0.75
+            # for i in range(num_players):
+            #     instructions[i+1] = 3.33
+            races = 5
                 
         elif len(arguments) > 0:
             try:
@@ -652,14 +714,13 @@ class Updating(commands.Cog):
             else:
                 mults.append(1)
 
-        races = 1
         if len(arguments) > 1:
             try:
                 raceArg = int(arguments[1])
             except ValueError:
                 await ctx.send("The number of races you entered is not a valid integer; try again.", delete_after=10)
                 return
-            if raceArg != 1:
+            if raceArg != 1 and tier.upper() != "SQ":
                 await ctx.send("The number of races you entered is not 1; try again.", delete_after=10)
                 return
             races = raceArg
@@ -743,9 +804,12 @@ class Updating(commands.Cog):
         
         arguments = extraArgs.split(";")
         instructions = {}
+        races = 1
+
         if tier.upper() == "SQ":
-            for i in range(num_players):
-                instructions[i+1] = 0.75
+            # for i in range(num_players):
+            #     instructions[i+1] = 3.33
+            races = 5
                 
         elif len(arguments) > 0:
             try:
@@ -759,14 +823,13 @@ class Updating(commands.Cog):
             else:
                 mults.append(1)
 
-        races = 1
         if len(arguments) > 1:
             try:
                 raceArg = int(arguments[1])
             except ValueError:
                 await ctx.send("The number of races you entered is not a valid integer; try again.", delete_after=10)
                 return
-            if raceArg != 1:
+            if raceArg != 1 and tier.upper() != "SQ":
                 await ctx.send("The number of races you entered is not 1; try again.", delete_after=10)
                 return
             races = raceArg
@@ -1531,6 +1594,8 @@ class Updating(commands.Cog):
     #     except discord.HTTPException:
     #         pass
     #     await ctx.send(f"Successfully placed {goodName} in {rank.lower()} with {placemmr} MMR; make sure to give them the {rank.lower()} role in server!")
+
+    
 
     @commands.command(name="assignranks")
     @commands.has_any_role("Administrator", "Lounge Staff")
