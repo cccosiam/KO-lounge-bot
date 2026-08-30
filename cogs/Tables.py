@@ -445,7 +445,7 @@ class Tables(commands.Cog):
             if len(parts) != 2:
                 await ctx.send(
                     f"Could not read this player line:\n`{line}`\n\n"
-                    "Each player must be written as `Player Name Score`."
+                    "Each player must be written as `Player Score`."
                 )
                 return
 
@@ -509,6 +509,9 @@ class Tables(commands.Cog):
                 + "\n".join(invalid_teams)
             )
             return
+
+        for team in teams:
+            team["players"].sort(key=lambda player: player["score"], reverse=True)
 
         all_players = [
             player
@@ -599,7 +602,7 @@ class Tables(commands.Cog):
         if is1550 != 1550:
             e.add_field(
                 name="⚠️ Warning",
-                value=f"The total score of {is1550} might be incorrect! Most tables should add up to 1550 points. Please check your input for duplicate scores.",
+                value=f"The total score of {is1550} might be incorrect! Most tables should add up to 1550 points. Please check your input.",
             )
 
         embedded = await ctx.send(content=content, embed=e)

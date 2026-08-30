@@ -594,6 +594,7 @@ class Penalties(commands.Cog):
         app_commands.Choice(name="No host",               value="No host"),
         app_commands.Choice(name="Inappropriate name",    value="Inappropriate name"),
         app_commands.Choice(name="FFA name violation",    value="FFA name violation"),
+        app_commands.Choice(name="SQ name violation", value="SQ name violation"),
         app_commands.Choice(name="No video proof",        value="No video proof"),
     ])
     @app_commands.checks.has_any_role("Administrator", "Updater", "Lounge Staff", "Reporter")

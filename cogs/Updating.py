@@ -20,7 +20,7 @@ import random
 import sqlite3
 
 from constants import (channels, key_channels, key_roles, ranks, getRank,
-                       SH_KEY, updateCols, getCols,
+                       SH_KEY, LOOKUP_KEY, updateCols, getCols, mmrColumn,
                        peakColumn, rowOffset, colOffset,
                        sheet_start_rows,
                        rowcol_to_a1, get_strike_info,
@@ -98,6 +98,7 @@ def _generate_mmr_table_image(
     races: int,
     id_num: int,
     promotion_labels: list | None = None,
+    scores: list | None = None,
     output_filename: str = "MMRTable.png"
 ) -> Path:
     """
@@ -116,7 +117,10 @@ def _generate_mmr_table_image(
     table_font_bold = font_manager.FontProperties(fname=font_path_bold, size=12)
     plt.rcParams['font.family'] = table_font.get_name()
 
-    headers = ["Rank", "Player", "Peak", "Old MMR", "+/-", "New MMR", "Promotions"]
+    if tier.upper() == "SQ":
+        headers = ["Rank", "Player", "Score", "Peak", "Old MMR", "+/-", "New MMR", "Promotions"]
+    else:
+        headers = ["Rank", "Player", "Peak", "Old MMR", "+/-", "New MMR", "Promotions"]
 
     for i in range(len(good_names)):
         row = []
@@ -127,11 +131,9 @@ def _generate_mmr_table_image(
             row.append("")
 
         row.append(good_names[i])
-        # if tier.upper() == "SQ":
-        #     if scores is not None and i < len(scores):
-        #         row.append(scores[i])
-        #     else:
-        #         row.append("-")
+        if tier.upper() == "SQ":
+            score = scores[i] if scores and i < len(scores) else "-"
+            row.append(score)
         peak_val = peak_mmrs[i] if i < len(peak_mmrs) else "N/A"
         row.append(peak_val if peak_val != "N/A" else "-")
         row.append(old_mmrs[i])
@@ -144,6 +146,8 @@ def _generate_mmr_table_image(
     color_bg = "#241C3D" # Dark purple
 
     fig, ax = plt.subplots(figsize=(8.6, 9), facecolor=color_bg)
+    if tier.upper() == "SQ":
+        fig, ax = plt.subplots(figsize=(9.5, 9), facecolor=color_bg)
     ax.set_facecolor(color_bg)
     ax.axis('off')
 
@@ -160,15 +164,31 @@ def _generate_mmr_table_image(
     the_table.set_fontsize(13)
 
     cells = the_table.get_celld()
+    if tier.upper() != "SQ":
+        place_col, name_col, peak_col, old_col, change_col, new_col, promo_col = range(7)
+    else:
+        place_col, name_col, score_col, peak_col, old_col, change_col, new_col, promo_col = range(8)
+
     column_widths = {
-        0: 0.08,  # Placement
-        1: 0.30,  # Player Name
-        2: 0.10,  # Peak MMR
-        3: 0.12,  # Old MMR
-        4: 0.09,  # Change
-        5: 0.12,  # New MMR
-        6: 0.20   # Promotions
+        place_col: 0.08,
+        name_col: 0.30,
+        peak_col: 0.10, 
+        old_col: 0.12, 
+        change_col: 0.09, 
+        new_col: 0.12,
+        promo_col: 0.20
     }
+    if tier.upper() == "SQ":
+        column_widths = {
+            place_col: 0.08,  # Placement
+            name_col: 0.28,  # Player Name
+            score_col: 0.09,  # Score
+            peak_col: 0.10,  # Peak MMR
+            old_col: 0.12,  # Old MMR
+            change_col: 0.09,  # Change
+            new_col: 0.12,  # New MMR
+            promo_col: 0.19   # Promotions
+        }
 
     header_color = '#3A2E62'  # Dark Purple
     border_color = '#2C2C2C' # Gray
@@ -188,20 +208,18 @@ def _generate_mmr_table_image(
         if col_idx in column_widths:
             cell.set_width(column_widths[col_idx])
         text = cell.get_text().get_text()
-        # if len(text) > 15:
-        #     cell.get_text().set_fontsize(11)
         if row_idx == 0: # Header row
             cell.set_height(1.03)
             cell.set_facecolor(header_color)
             cell.get_text().set_fontsize(12.5)
         else:
             cell.set_height(1.1)
-            if col_idx == 1: # Player Name column
+            if col_idx == name_col: 
                 cell.set_facecolor(player_cell_color)
-            if col_idx == 5: # New MMR column
+            if col_idx == new_col:
                 cell.get_text().set_fontproperties(table_font_bold)
                 cell.get_text().set_fontsize(13)
-            if col_idx == 4: # MMR Change column
+            if col_idx == change_col:
                 cell.set_facecolor(player_cell_color)
                 raw_text = cell.get_text().get_text()
                 try:
@@ -352,7 +370,9 @@ class Updating(commands.Cog):
         channel = ctx.guild.get_channel(channels[tier.upper()])
         start = sheet_start_rows[size]
 
+        scores = []
         if tier.upper() == "SQ":
+            scores = [int(score) for score in placements]
             team_scores = [
                 sum(int(score) for score in placements[i:i + size])
                 for i in range(0, len(placements), size)
@@ -365,23 +385,29 @@ class Updating(commands.Cog):
                 for score in team_scores
             ]
 
+            # Sorted teams structure: [(placement, teamscore, index)]
             sorted_teams = sorted(
                 zip(team_placements, team_scores, range(len(team_placements))),
                 key=lambda x: x[0]
             )
-            print(sorted_teams)
 
+            # Placements structure for 6v6 example: [1, 2, 3, 4]
             placements = [team[0] for team in sorted_teams]
-            print(placements)
 
             sorted_names = []
+            sorted_scores = []
             for _, _, team_index in sorted_teams:
                 team_start = team_index * size
+                team_end = team_start + size
                 sorted_names.extend(
-                    names[team_start:team_start + size]
+                    names[team_start:team_end]
+                )
+                sorted_scores.extend(
+                    scores[team_start:team_end]
                 )
 
             names = sorted_names
+            scores = sorted_scores
               
         updateCells = [{
             'range': f"{updateCols[0]}{start}:{updateCols[0]}{start+num_players-1}",
@@ -393,6 +419,7 @@ class Updating(commands.Cog):
             ]
         updateCells.append({'range': f"C{start+num_players}",
                             'values': [[races]]})
+
         await botSheet.batch_update(updateCells)
 
         gotBatch = await botSheet.batch_get([f"{getCols[0]}{start}:{getCols[1]}{start+num_players-1}"])
@@ -420,7 +447,7 @@ class Updating(commands.Cog):
         for i in range(num_players):
             if rowNums[i] == "#N/A" or oldMMRs[i] == "N/A":
                 errors += f"Player {names[i]} is not on the sheet; check your input.\n"
-            if colNums[i] >= 399:
+            if colNums[i] >= 999:
                 errors += (f"Player {names[i]} needs to be archived, which is not supported by this bot; "
                            "please update this table with the sheet script.\n")
             if oldMMRs[i] == "Placement":
@@ -433,26 +460,28 @@ class Updating(commands.Cog):
         
         updateCells = []
         placementUpdateCells = []
-        peakChanges = []
+        # peakChanges = []
         # The `placements` list in the DB is stored reversed relative to the
         # visual order. Reverse it here so images and placement history are
         # generated in ascending order (1 -> N).
         try:
-            placements = list(placements)[::-1]
+            if tier.upper() != "SQ":
+                placements = list(placements)[::-1]
         except Exception:
             placements = placements
         for i in range(num_players):
-            if peakMMRs[i] == "N/A":
-                if colNums[i] >= 4:
-                    peakCell = {'range': f"{peakColumn}{int(rowNums[i])+rowOffset}",
-                                'values': [[newMMRs[i]]]}
-                    updateCells.append(peakCell)
-                    peakChanges.append([str(int(rowNums[i])+rowOffset), "N/A"])
-            elif newMMRs[i] > int(peakMMRs[i]):
-                peakCell = {'range': f"{peakColumn}{int(rowNums[i])+rowOffset}",
-                            'values': [[newMMRs[i]]]}
-                updateCells.append(peakCell)
-                peakChanges.append([str(int(rowNums[i])+rowOffset), str(peakMMRs[i])])
+            # Sheet now handles Peak logic
+            # if peakMMRs[i] == "N/A":
+            #     if colNums[i] >= 4:
+            #         peakCell = {'range': f"{peakColumn}{int(rowNums[i])+rowOffset}",
+            #                     'values': [[newMMRs[i]]]}
+            #         updateCells.append(peakCell)
+            #         peakChanges.append([str(int(rowNums[i])+rowOffset), "N/A"])
+            # elif newMMRs[i] > int(peakMMRs[i]):
+            #     peakCell = {'range': f"{peakColumn}{int(rowNums[i])+rowOffset}",
+            #                 'values': [[newMMRs[i]]]}
+            #     updateCells.append(peakCell)
+            #     peakChanges.append([str(int(rowNums[i])+rowOffset), str(peakMMRs[i])])
             
             current_mmr_change = mmrChanges[i]
             while int(oldMMRs[i]) + current_mmr_change < 0:
@@ -504,6 +533,7 @@ class Updating(commands.Cog):
                 races=races,
                 id_num=idNum,
                 promotion_labels=promotion_labels,
+                scores=scores,
                 output_filename=image_output_path
             )
             await loop.run_in_executor(None, image_generation_task)
@@ -558,7 +588,8 @@ class Updating(commands.Cog):
         
         rowNumStr = ",".join([str(rowNum) for rowNum in rowNums])
         colNumStr = ",".join([str(colNum) for colNum in colNums])
-        peakChangesStr = ",".join([",".join(map(str, change)) for change in peakChanges])
+        # peakChangesStr = ",".join([",".join(map(str, change)) for change in peakChanges])
+        peakChangesStr = ""
         placements_str = ",".join(str(p) for p in placements)
         oldmmrs_str = ",".join(str(val) for val in oldMMRs)
         newmmrs_str = ",".join(str(val) for val in newMMRs)
@@ -1019,7 +1050,7 @@ class Updating(commands.Cog):
                 return
             rowids = table[1].split(",")
             colids = table[2].split(",")
-            peakchanges = table[3].split(",")
+            # peakchanges = table[3].split(",")
             msgid = table[4]
             tier = table[5]
             oldmmrs = table[6].split(",") if len(table) > 6 and table[6] else []
@@ -1029,15 +1060,15 @@ class Updating(commands.Cog):
                 clearCell = {'range': rowcol_to_a1(int(rowids[i])+rowOffset, int(colids[i])+colOffset),
                              'values': [['']]}
                 clearedCells.append(clearCell)
-            for i in range(int(len(peakchanges)/2)):
-                oldpeak_val = peakchanges[2*i+1]
-                if oldpeak_val != "N/A":
-                    oldpeak = int(oldpeak_val)
-                else:
-                    oldpeak = oldpeak_val
-                peakCell = {'range': f"{peakColumn}{int(peakchanges[2*i])}",
-                            'values': [[oldpeak]]}
-                clearedCells.append(peakCell)
+            # for i in range(int(len(peakchanges)/2)):
+            #     oldpeak_val = peakchanges[2*i+1]
+            #     if oldpeak_val != "N/A":
+            #         oldpeak = int(oldpeak_val)
+            #     else:
+            #         oldpeak = oldpeak_val
+            #     peakCell = {'range': f"{peakColumn}{int(peakchanges[2*i])}",
+            #                 'values': [[oldpeak]]}
+            #     clearedCells.append(peakCell)
             player_names = []
             for i in range(num_players):
                 row_num = int(rowids[i]) + rowOffset
@@ -1124,7 +1155,6 @@ class Updating(commands.Cog):
 
             rowids = table[1].split(",")
             colids = table[2].split(",")
-            peakchanges = table[3].split(",")
             msgid = table[4]
             tier = table[5]
 
@@ -1595,7 +1625,145 @@ class Updating(commands.Cog):
     #         pass
     #     await ctx.send(f"Successfully placed {goodName} in {rank.lower()} with {placemmr} MMR; make sure to give them the {rank.lower()} role in server!")
 
-    
+    @commands.command(name="fixrole")
+    async def fixrole(self, ctx, *, player_name: str = None):
+        if ctx.guild.id != self.config["server"]:
+            await ctx.send("You cannot use this command in this server!")
+            return
+
+        if player_name is None:
+            member = ctx.author
+            good_name = member.display_name
+
+            player_role = ctx.guild.get_role(key_roles["player"])
+
+            if player_role not in member.roles:
+                await ctx.send(
+                    "You need to be a verified player to use this command."
+                )
+                return
+
+        else:
+            agc = await agcm.authorize()
+            sh = await agc.open_by_key(LOOKUP_KEY)
+            search_sheet = await sh.worksheet("search")
+
+            await search_sheet.update("B9", [[player_name]])
+
+            result = await search_sheet.acell("C9")
+            good_name = str(result.value).strip() if result.value else ""
+
+            if not good_name or good_name == "N/A":
+                await ctx.send(
+                    f"Could not find a player named **{player_name}**."
+                )
+                return
+
+            member = findmember(ctx, good_name)
+
+            if member is None:
+                await ctx.send(
+                    f"Found **{good_name}** in the player database, "
+                    f"but could not find them in the Discord server."
+                )
+                return
+
+        agc = await agcm.authorize()
+        sh = await agc.open_by_key(SH_KEY)
+        pHistory = await sh.worksheet("Player History")
+
+        names = await pHistory.col_values(1)
+
+        player_row = None
+
+        for i, sheet_name in enumerate(names, start=1):
+            if sheet_name.strip().casefold() == good_name.strip().casefold():
+                player_row = i
+                break
+
+        if player_row is None:
+            await ctx.send(
+                f"Could not find **{good_name}** in Player History."
+            )
+            return
+
+        mmr_cell = await pHistory.acell(f"{mmrColumn}{player_row}")
+
+        try:
+            mmr = int(float(mmr_cell.value))
+        except (TypeError, ValueError):
+            await ctx.send(
+                f"Could not determine **{member.display_name}**'s MMR."
+            )
+            return
+
+        correct_rank = getRank(mmr)
+
+        if correct_rank not in ranks:
+            await ctx.send(
+                f"Could not determine the correct rank for **{member.display_name}**. Please contact a staff member."
+            )
+            return
+
+        correct_role = ctx.guild.get_role(
+            ranks[correct_rank]["roleid"]
+        )
+
+        if correct_role is None:
+            await ctx.send(
+                f"The Discord role for **{correct_rank}** could not be found. Please contact a staff member."
+            )
+            return
+
+        removed_roles = []
+
+        for rank_name, rank_data in ranks.items():
+            role = ctx.guild.get_role(rank_data["roleid"])
+
+            if (
+                role
+                and role in member.roles
+                and role.id != correct_role.id
+            ):
+                try:
+                    await member.remove_roles(
+                        role,
+                        reason=f"Rank role repaired by {ctx.author}"
+                    )
+                    removed_roles.append(role.name)
+
+                except (discord.Forbidden, discord.HTTPException):
+                    await ctx.send(
+                        f"Could not remove **{role.name}** from {member.mention}. Please contact a staff member."
+                    )
+                    return
+
+        role_was_missing = correct_role not in member.roles
+
+        if role_was_missing:
+            try:
+                await member.add_roles(
+                    correct_role,
+                    reason=f"Rank role fived via `!fixrole` by {ctx.author}"
+                )
+            except (discord.Forbidden, discord.HTTPException):
+                await ctx.send(
+                    f"Could not assign **{correct_role.name}** to {member.mention}. Please try again."
+                )
+                return
+
+        if not removed_roles and not role_was_missing:
+            await ctx.send(
+                f"{member.mention} already has the correct rank role "
+                f"**{correct_role.name}** for **{mmr}** MMR."
+            )
+            return
+
+        await ctx.send(
+            f"Fixed {member.mention}'s rank role.\n"
+            f"MMR: {mmr}\n"
+            f"Correct rank: {correct_role.name}"
+        )
 
     @commands.command(name="assignranks")
     @commands.has_any_role("Administrator", "Lounge Staff")
