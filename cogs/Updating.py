@@ -1781,11 +1781,10 @@ class Updating(commands.Cog):
         sh  = await agc.open_by_key(SH_KEY)
         ph  = await sh.worksheet("Player History")
 
-        # Column A = name, column E = current MMR (adjust if your layout differs)
+        # Column A = name, column E = current MMR (adjust if layout differs)
         name_col = await ph.col_values(1)
         mmr_col  = await ph.col_values(5)
 
-        # Build a name → MMR lookup (lowercase keys for case-insensitive matching)
         sheet_data = {}
         for i, name in enumerate(name_col):
             name = name.strip()
@@ -1795,16 +1794,14 @@ class Updating(commands.Cog):
             try:
                 sheet_data[name.lower()] = int(mmr_val)
             except (ValueError, TypeError):
-                pass  # skip header or non-numeric MMR cells
+                pass 
 
-        # ── Collect all rank role objects ─────────────────────────────────────
         rank_roles = {
             rank_name: ctx.guild.get_role(info["roleid"])
             for rank_name, info in ranks.items()
         }
         all_rank_roles = [r for r in rank_roles.values() if r is not None]
 
-        # ── Get the Player role ───────────────────────────────────────────────
         player_role = discord.utils.get(ctx.guild.roles, name="Player")
         if player_role is None:
             await status_msg.edit(content="could not find the **Player** role.")
@@ -1844,14 +1841,11 @@ class Updating(commands.Cog):
             except discord.HTTPException as e:
                 skipped.append(f"• **{member.display_name}** — HTTP error: `{e}`")
 
-            # Small delay to avoid hitting Discord's rate limit on role edits
             await asyncio.sleep(0.2)
 
-        # ── Final report ──────────────────────────────────────────────────────
         summary = f"done. **{assigned}/{len(players)}** players assigned ranks."
         if skipped:
             skipped_text = "\n".join(skipped)
-            # Split into chunks if too long for a single message
             if len(skipped_text) > 1800:
                 skipped_text = skipped_text[:1800] + "\n… (truncated)"
             summary += f"\n\n**Skipped ({len(skipped)}):**\n{skipped_text}"
@@ -1872,8 +1866,8 @@ class Updating(commands.Cog):
                 except ValueError:
                     await ctx.send(f"Your first argument in instruction `{string}` is not an integer!", delete_after=15)
                     raise ValueError("Player ID not integer")
-                if not (1 <= playerID <= 12): # Assuming 12 is max player ID in a table
-                    await ctx.send(f"Your first argument in instruction `{string}` needs to be between 1 and 12.", delete_after=15)
+                if not (1 <= playerID <= num_players): 
+                    await ctx.send(f"Your first argument in instruction `{string}` needs to be between 1 and {num_players}.", delete_after=15)
                     raise ValueError("Player ID out of range")
                 try:
                     multiplier = float(idAmount[1].strip())

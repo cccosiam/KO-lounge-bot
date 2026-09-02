@@ -34,8 +34,6 @@ class Tables(commands.Cog):
         with open('./config.json', 'r') as cjson:
             self.config = json.load(cjson)
 
-    # ── Helpers ───────────────────────────────────────────────────────────────
-
     def _is_gps(self, scores: str) -> bool:
         for gp in re.split(r"[|+]", scores):
             if not gp.strip().isdigit():
@@ -59,6 +57,21 @@ class Tables(commands.Cog):
             players.append(" ".join(parts[:-1]))
             scores.append(self._sum_gps(parts[-1]))
         return players, scores
+
+    @staticmethod
+    async def fetch_country(session: aiohttp.ClientSession, mkc_id: str) -> str:
+            """Return uppercase country code or empty string on failure."""
+            if not mkc_id:
+                return ""
+            try:
+                url = f"http://mkc-api.vps.mkcentral.com/api/registry/players/{mkc_id}"
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                    if resp.status != 200:
+                        return ""
+                    data = await resp.json()
+                    return (data.get("country_code") or "").upper()
+            except Exception:
+                return ""
 
     @commands.command(name="table")
     @commands.max_concurrency(number=1, wait=True)
@@ -154,6 +167,30 @@ class Tables(commands.Cog):
             await ctx.send(errors)
             return
 
+        try:
+            sh_main      = await agcm.authorize()
+            sh_main      = await sh_main.open_by_key(SH_KEY)
+            ph_ws        = await sh_main.worksheet("Player History")
+            ph_name_col  = await ph_ws.col_values(1)
+            ph_mkc_col   = await ph_ws.col_values(2)
+            # Build name (lowercase) → MKC ID map
+            name_to_mkc  = {
+                ph_name_col[i].strip().lower(): ph_mkc_col[i].strip()
+                for i in range(min(len(ph_name_col), len(ph_mkc_col)))
+                if ph_name_col[i].strip() and ph_mkc_col[i].strip()
+            }
+        except Exception:
+            name_to_mkc = {}
+ 
+        fetch_country = Tables.fetch_country
+        async with aiohttp.ClientSession() as session:
+            mkc_ids      = [name_to_mkc.get(n.strip().lower(), "") for n in good_names]
+            country_codes = await asyncio.gather(*[fetch_country(session, mid) for mid in mkc_ids])
+ 
+        def display_name(name: str, country: str) -> str:
+            return f"{name} [{country}]" if country else name
+
+
         sorted_scores.reverse()
 
         table_text = (
@@ -161,14 +198,13 @@ class Tables(commands.Cog):
             f"#title Tier {tier} FFA\n"
             "FFA - Free for All #FFAC1C\n" #8078FA ourple
         )
-        for name, score in zip(good_names, sorted_scores):
-            table_text += f"{name} {score}\n"
+        for name, score, country in zip(good_names, sorted_scores, country_codes):
+            table_text += f"{display_name(name, country)} {score}\n"
 
         image_url = (
             "https://gb2.hlorenzi.com/table.png?data="
             + urllib.parse.quote(table_text)
         )
-
         # score_groups = defaultdict(list)
         # for _name, _score, _placement in zip(sorted_names, sorted_scores, placements):
         #     score_groups[_score].append((_name, _placement))
@@ -567,11 +603,35 @@ class Tables(commands.Cog):
             await ctx.send(errors)
             return
 
+        try:
+            sh_main      = await agcm.authorize()
+            sh_main      = await sh_main.open_by_key(SH_KEY)
+            ph_ws        = await sh_main.worksheet("Player History")
+            ph_name_col  = await ph_ws.col_values(1)
+            ph_mkc_col   = await ph_ws.col_values(2)
+            # Build name (lowercase) → MKC ID map
+            name_to_mkc  = {
+                ph_name_col[i].strip().lower(): ph_mkc_col[i].strip()
+                for i in range(min(len(ph_name_col), len(ph_mkc_col)))
+                if ph_name_col[i].strip() and ph_mkc_col[i].strip()
+            }
+        except Exception:
+            name_to_mkc = {}
+ 
+        fetch_country = Tables.fetch_country
+        async with aiohttp.ClientSession() as session:
+            mkc_ids      = [name_to_mkc.get(n.strip().lower(), "") for n in good_names]
+            country_codes = await asyncio.gather(*[fetch_country(session, mid) for mid in mkc_ids])
+ 
+        def display_name(name: str, country: str) -> str:
+            return f"{name} [{country}]" if country else name
+
         table_text = (
             f"#title Tier {tier}\n"
             "Results #FFAC1C\n"
         )
 
+        player_index = 0
         for team, team_good_names in zip(
             teams,
             [
@@ -585,7 +645,8 @@ class Tables(commands.Cog):
             table_text += f"{team['tag']}\n"
 
             for player, good_name in zip(team["players"], team_good_names):
-                table_text += f"{good_name} {player['score']}\n"
+                table_text += f"{display_name(good_name, country_codes[player_index])} {player['score']}\n"
+                player_index += 1
 
         image_url = (
             "https://gb2.hlorenzi.com/table.png?data="
