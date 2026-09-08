@@ -3,6 +3,8 @@ from discord.ext import commands
 import json
 import logging
 import asyncio
+import os
+import sys
 
 from cogs.Namechange import RequestButtonView, NameChange
 
@@ -50,6 +52,14 @@ class KOLoungeBot(commands.Bot):
     async def on_ready(self):
         logger.info(f"Logged in as {self.user} (ID: {self.user.id})")
         logger.info("------")
+
+    @commands.command(name="reset")
+    @commands.has_any_role("Administrator")
+    async def reset(self, ctx):
+        """Restart the bot process with a clean runtime state."""
+        await ctx.send("Restarting the bot...")
+        await self.close()
+        os.execv(sys.executable, [sys.executable, *sys.argv])
 
     async def on_command_error(self, ctx, error):
         """Global error handler with safe attribute access."""

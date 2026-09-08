@@ -628,7 +628,7 @@ class Tables(commands.Cog):
 
         table_text = (
             f"#title Tier {tier}\n"
-            "Results #FFAC1C\n"
+            "Results #9A78FA\n"
         )
 
         player_index = 0
@@ -652,7 +652,7 @@ class Tables(commands.Cog):
             "https://gb2.hlorenzi.com/table.png?data="
             + urllib.parse.quote(table_text)
         )
-
+        
         e = discord.Embed(title="SQ Table")
         e.set_image(url=image_url)
 
@@ -747,7 +747,6 @@ class Tables(commands.Cog):
                 file_data = io.BytesIO(await resp.read())
                 f = discord.File(file_data, filename="MogiTable.png")
 
-        # ── Build result embed ───────────────────────────────────────────────────
         result_embed = discord.Embed(
             title="SQ Table",
             colour=int("625B09", 16)
@@ -766,7 +765,6 @@ class Tables(commands.Cog):
 
         result_embed.set_image(url="attachment://MogiTable.png")
 
-        # ── Post to tier channel ────────────────────────────────────────────────
         tier_channel = ctx.guild.get_channel(channels[tier.upper()])
 
         try:
@@ -813,7 +811,6 @@ class Tables(commands.Cog):
         else:
             await ctx.message.delete()
 
-        # ── Update DB with Discord message ID ────────────────────────────────────
         try:
             db = await aiosqlite.connect("updating.db")
             c = await db.cursor()
@@ -831,7 +828,6 @@ class Tables(commands.Cog):
         finally:
             await db.close()
 
-        # ── Updating log ─────────────────────────────────────────────────────────
         try:
             log_channel_id = key_channels.get("updating_log", 0)
 
@@ -1001,7 +997,6 @@ class Tables(commands.Cog):
             await c.execute("DELETE from tables WHERE tableid = ?", (tableid,))
             await db.commit()
             await ctx.send(f"Removed table {tableid} from approval queue")
-            # Log deletion to updating log
             try:
                 log_channel_id = key_channels.get("updating_log", 0)
                 if log_channel_id:

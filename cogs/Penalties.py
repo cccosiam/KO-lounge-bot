@@ -706,7 +706,6 @@ class Penalties(commands.Cog):
     #             "❌ I don't have permission to post in the log channel.", ephemeral=True
     #         )
 
-    # ── /request_mmr_reduction ────────────────────────────────────────────────
 
     @app_commands.command(
         name="request_mmr_reduction",
@@ -714,16 +713,25 @@ class Penalties(commands.Cog):
     )
     @app_commands.describe(
         table_id="The ID of the table/match where this occurred",
+        races_missed="Number of races missed by the teammate (1-5)",
         reason="Additional context you would like to provide to staff (optional)",
     )
     @app_commands.choices(reduction_reason=[
         app_commands.Choice(name="Disconnect before start", value="Disconnect before start"),
+        app_commands.Choice(name="SQ Teammate Missing", value="SQ Teammate Missing"),
+    ], races_missed=[
+        app_commands.Choice(name="1", value=1),
+        app_commands.Choice(name="2", value=2),
+        app_commands.Choice(name="3", value=3),
+        app_commands.Choice(name="4", value=4),
+        app_commands.Choice(name="5", value=5),
     ])
     async def request_mmr_reduction(
         self,
         interaction: discord.Interaction,
         reduction_reason: app_commands.Choice[str],
         table_id: str,
+        races_missed: app_commands.Choice[int],
         reason: Optional[str] = None,
     ):
         await interaction.response.defer(ephemeral=True)
@@ -748,58 +756,62 @@ class Penalties(commands.Cog):
             )
             return
 
-        # ── Prompt for proof upload ───────────────────────────────────────────
-        prompt = await interaction.followup.send(
-            "📎 Please upload your **photo or video proof** as a file attachment "
-            "in this channel within **60 seconds**. "
-            "Your request will not be submitted without it.",
-            ephemeral=False,
-            wait=True,
-        )
+        attachment = None
+        proof_file = None
 
-        def is_proof(m: discord.Message) -> bool:
-            return (
-                m.author.id == interaction.user.id
-                and m.channel.id == interaction.channel_id
-                and len(m.attachments) > 0
+        if reduction_reason.value == "Disconnect before start":
+            prompt = await interaction.followup.send(
+                "📎 Please upload **photo or video proof** as a file attachment "
+                "in this channel within **60 seconds**. "
+                "Your request will not be submitted without it.",
+                ephemeral=False,
+                wait=True,
             )
 
-        try:
-            proof_msg = await self.bot.wait_for("message", check=is_proof, timeout=60.0)
-        except asyncio.TimeoutError:
-            await prompt.edit(
-                content="⏰ You didn't upload proof in time. Please run the command again."
-            )
-            return
+            def is_proof(m: discord.Message) -> bool:
+                return (
+                    m.author.id == interaction.user.id
+                    and m.channel.id == interaction.channel_id
+                    and len(m.attachments) > 0
+                )
 
-        attachment = proof_msg.attachments[0]
+            try:
+                proof_msg = await self.bot.wait_for("message", check=is_proof, timeout=60.0)
+            except asyncio.TimeoutError:
+                await prompt.edit(
+                    content="⏰ You didn't upload proof in time. Please run the command again."
+                )
+                return
 
-        async with aiohttp.ClientSession() as session:
-            async with session.get(attachment.url) as resp:
-                if resp.status != 200:
-                    await prompt.edit(
-                        content="❌ Could not download your attachment. Please try again."
-                    )
-                    await proof_msg.delete()
-                    return
-                file_bytes = await resp.read()
+            attachment = proof_msg.attachments[0]
 
-        proof_file = discord.File(io.BytesIO(file_bytes), filename=attachment.filename)
+            async with aiohttp.ClientSession() as session:
+                async with session.get(attachment.url) as resp:
+                    if resp.status != 200:
+                        await prompt.edit(
+                            content="❌ Could not download your attachment. Please try again."
+                        )
+                        await proof_msg.delete()
+                        return
+                    file_bytes = await resp.read()
 
-        try:
-            await proof_msg.delete()
-            await prompt.delete()
-        except discord.HTTPException:
-            pass
+            proof_file = discord.File(io.BytesIO(file_bytes), filename=attachment.filename)
 
-        # ── Build and post the log embed ──────────────────────────────────────
+            try:
+                await proof_msg.delete()
+                await prompt.delete()
+            except discord.HTTPException:
+                pass
         embed = discord.Embed(title="MMR Reduction Request", color=discord.Color.orange())
-        embed.add_field(name="Reporter",             value=interaction.user.mention,          inline=True)
-        embed.add_field(name="Table ID",             value=str(table_id_value),               inline=True)
-        embed.add_field(name="Table Status",         value=table_status,                      inline=True)
-        embed.add_field(name="Reason for Reduction", value=reduction_reason.name,             inline=False)
-        embed.add_field(name="Additional Info",      value=reason or "No additional info.",   inline=False)
-        embed.set_image(url=f"attachment://{attachment.filename}")
+        embed.add_field(name="Reporter", value=interaction.user.mention, inline=True)
+        embed.add_field(name="Table ID", value=str(table_id_value), inline=True)
+        embed.add_field(name="Table Status", value=table_status, inline=True)
+        embed.add_field(name="Reason for Reduction", value=reduction_reason.name, inline=False)
+        if reduction_reason.value == "SQ Teammate Missing" and races_missed is not None:
+            embed.add_field(name="Races Missed", value=str(races_missed.value), inline=False)
+        embed.add_field(name="Additional Info", value=reason or "No additional info.", inline=False)
+        if attachment is not None:
+            embed.set_image(url=f"attachment://{attachment.filename}")
         embed.set_footer(text=f"User ID: {interaction.user.id}")
 
         view = MMRReductionView(
@@ -810,7 +822,10 @@ class Penalties(commands.Cog):
         )
 
         try:
-            await log_channel.send(embed=embed, file=proof_file, view=view)
+            message_kwargs = {"embed": embed, "view": view}
+            if proof_file is not None:
+                message_kwargs["file"] = proof_file
+            await log_channel.send(**message_kwargs)
             await interaction.followup.send(
                 "✅ Your MMR reduction request has been submitted for staff review.",
                 ephemeral=True,

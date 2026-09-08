@@ -10,7 +10,7 @@ import json
 from datetime import datetime, timezone
 from typing import Optional
  
-from constants import SH_KEY, key_channels
+from constants import SH_KEY, key_channels, key_roles
  
 NAME_CHANGE_REQUEST_CHANNEL_ID = key_channels["name_change_request"]
 NAME_CHANGE_LOG_CHANNEL_ID     = key_channels["name_change_log"]
@@ -46,6 +46,47 @@ def error_embed(title, description):
  
 def warning_embed(title, description):
     return _embed(title, description, discord.Color.orange())
+
+def findmember(ctx, name):
+    members = ctx.guild.members
+    player_role = ctx.guild.get_role(key_roles["player"])
+    target_name = (name or "").strip().lower()
+
+    def pred(m):
+        if player_role not in m.roles:
+            return False
+
+        candidate_names = []
+        if m.display_name:
+            candidate_names.append(m.display_name)
+        if m.nick:
+            candidate_names.append(m.nick)
+        if m.name:
+            candidate_names.append(m.name)
+
+        normalized_candidates = {
+            candidate.strip().lower()
+            for candidate in candidate_names
+            if candidate and candidate.strip()
+        }
+
+        return target_name in normalized_candidates
+
+    return discord.utils.find(pred, members)
+
+def find_member_for_name_change(ctx, name):
+    target_name = (name or "").strip().casefold()
+
+    def matches(member):
+        if member.bot:
+            return False
+        candidate_names = (member.display_name, member.nick, member.name)
+        return any(
+            candidate and candidate.strip().casefold() == target_name
+            for candidate in candidate_names
+        )
+
+    return discord.utils.find(matches, ctx.guild.members)
  
 async def get_sheet():
     agc = await agcm.authorize()
@@ -753,125 +794,150 @@ class NameChange(commands.Cog):
         ]
         await ctx.send("**Pending name change requests:**\n" + "\n".join(lines))
 
-        @commands.command(name="changename")
-        @commands.has_any_role("Administrator", "Lounge Staff")
-        async def changename(self, ctx, *, args: str):
-            """
-            Manually changes a player's name in Player History and their Discord nickname.
-            Usage: !changename <current_name> , <new_name>
-            """
-            if "," not in args:
-                await ctx.send(
-                    "Invalid format. Usage: `!changename <current name> , <new name>`\n"
-                    "Example: `!changename John Doe , Jane Smith`"
-                )
-                return
-    
-            parts    = args.split(",", 1)
-            old_name = parts[0].strip()
-            new_name = parts[1].strip()
-    
-            if not old_name or not new_name:
-                await ctx.send(
-                    "Both names must be provided. Usage: `!changename <current name> , <new name>`"
-                )
-                return
-            if ctx.guild.id != self.config["server"]:
-                return
-    
-            # ── Validate new name format ──────────────────────────────────────────
-            if not NICKNAME_REGEX.match(new_name.strip()):
-                await ctx.send(
-                    embed=error_embed(
-                        "❌ Invalid Name",
-                        "The new name must contain only **letters and numbers** "
-                        "and be between **2 and 16 characters**.",
-                    )
-                )
-                return
-    
-            status_msg = await ctx.send("Processing name change…")
-    
-            try:
-                agc = await agcm.authorize()
-                sh  = await agc.open_by_key(SH_KEY)
-                ws  = await sh.worksheet("Player History")
-                name_col    = await ws.col_values(1)
-                names_lower = [v.strip().lower() for v in name_col]
-    
-                # ── Check old name exists ─────────────────────────────────────────
-                if old_name.strip().lower() not in names_lower:
-                    await status_msg.edit(content=None, embed=error_embed(
-                        "❌ Player Not Found",
-                        f"**{discord.utils.escape_markdown(old_name)}** was not found in Player History.",
-                    ))
-                    return
-    
-                # ── Check new name is not already taken ───────────────────────────
-                if new_name.strip().lower() in names_lower:
-                    await status_msg.edit(content=None, embed=error_embed(
-                        "❌ Name Already Taken",
-                        f"**{discord.utils.escape_markdown(new_name)}** is already registered "
-                        "in the database. Please choose a different name.",
-                    ))
-                    return
-    
-            except Exception as exc:
-                await status_msg.edit(content=f"❌ Sheet error: `{exc}`")
-                return
-    
-            # ── Update Player History ─────────────────────────────────────────────
-            sheet_ok = await update_player_name_in_history(old_name, new_name)
-            if not sheet_ok:
-                await status_msg.edit(content=None, embed=error_embed(
-                    "❌ Sheet Update Failed",
-                    f"Could not find **{discord.utils.escape_markdown(old_name)}** in Player History. "
-                    "The sheet was not modified.",
-                ))
-                return
-    
-            # ── Find and update Discord nickname ──────────────────────────────────
-            member = discord.utils.find(
-                lambda m: (m.nick or m.name).lower() == old_name.strip().lower()
-                        and not m.bot,
-                ctx.guild.members,
+    @commands.command(name="changename")
+    @commands.has_any_role("Administrator", "Lounge Staff")
+    async def changename(self, ctx, *, args: str):
+        """
+        Manually changes a player's name in Player History and their Discord nickname.
+        Usage: !changename <current_name> , <new_name>
+        """
+        if "," not in args:
+            await ctx.send(
+                "Invalid format. Usage: `!changename <current name> , <new name>`\n"
+                "Example: `!changename John Doe , Jane Smith`"
             )
-    
-            nick_updated = False
-            nick_error   = ""
-    
-            if member is not None:
-                try:
-                    await member.edit(
-                        nick=new_name,
-                        reason=f"Manual name change by {ctx.author} — {old_name} → {new_name}",
-                    )
-                    nick_updated = True
-                except discord.Forbidden:
-                    nick_error = "Could not update nickname (bot has insufficient permissions)."
-                except discord.HTTPException as exc:
-                    nick_error = f"Nickname update failed: `{exc}`"
-            else:
-                nick_error = (
-                    f"No server member found with nickname **{discord.utils.escape_markdown(old_name)}**. "
-                    "Sheet was updated but Discord nickname was not changed."
+            return
+
+        parts    = args.split(",", 1)
+        old_name = parts[0].strip()
+        new_name = parts[1].strip()
+
+        if not old_name or not new_name:
+            await ctx.send(
+                "Both names must be provided. Usage: `!changename <current name> , <new name>`"
+            )
+            return
+        if ctx.guild.id != self.config["server"]:
+            return
+
+        if not NICKNAME_REGEX.match(new_name.strip()):
+            await ctx.send(
+                embed=error_embed(
+                    "❌ Invalid Name",
+                    "The new name must contain only **letters and numbers** "
+                    "and be between **2 and 16 characters**.",
                 )
-    
-            # ── Result ────────────────────────────────────────────────────────────
-            if nick_updated:
-                await status_msg.edit(content=None, embed=success_embed(
-                    "✅ Name Changed",
-                    f"**{discord.utils.escape_markdown(old_name)}** → "
-                    f"**{discord.utils.escape_markdown(new_name)}**",
+            )
+            return
+
+        status_msg = await ctx.send("Processing name change…")
+
+        try:
+            agc = await agcm.authorize()
+            sh  = await agc.open_by_key(SH_KEY)
+            ws  = await sh.worksheet("Player History")
+            name_col    = await ws.col_values(1)
+            names_lower = [v.strip().lower() for v in name_col]
+
+            if old_name.strip().lower() not in names_lower:
+                await status_msg.edit(content=None, embed=error_embed(
+                    "❌ Player Not Found",
+                    f"**{discord.utils.escape_markdown(old_name)}** was not found in Player History.",
                 ))
-            else:
-                e = warning_embed(
-                    "⚠️ Partially Updated",
-                    f"**{discord.utils.escape_markdown(old_name)}** → "
-                    f"**{discord.utils.escape_markdown(new_name)}**"
-                    f"• Discord nickname: {nick_error}",
+                return
+
+            if new_name.strip().lower() in names_lower:
+                await status_msg.edit(content=None, embed=error_embed(
+                    "❌ Name Already Taken",
+                    f"**{discord.utils.escape_markdown(new_name)}** is already registered "
+                    "in the database. Please choose a different name.",
+                ))
+                return
+
+        except Exception as exc:
+            await status_msg.edit(content=f"❌ Sheet error: `{exc}`")
+            return
+
+        sheet_ok = await update_player_name_in_history(old_name, new_name)
+        if not sheet_ok:
+            await status_msg.edit(content=None, embed=error_embed(
+                "❌ Sheet Update Failed",
+                f"Could not find **{discord.utils.escape_markdown(old_name)}** in Player History. "
+                "The sheet was not modified.",
+            ))
+            return
+
+        member = find_member_for_name_change(ctx, old_name)
+
+        nick_updated = False
+        nick_error   = ""
+
+        if member is not None:
+            try:
+                await member.edit(
+                    nick=new_name,
+                    reason=f"Manual name change by {ctx.author} — {old_name} → {new_name}",
                 )
-                await status_msg.edit(content=None, embed=e)
+                nick_updated = True
+            except discord.Forbidden:
+                nick_error = "Could not update nickname (bot has insufficient permissions)."
+            except discord.HTTPException as exc:
+                nick_error = f"Nickname update failed: `{exc}`"
+        else:
+            nick_error = (
+                f"No server member found with nickname **{discord.utils.escape_markdown(old_name)}**. "
+                "Sheet was updated but Discord nickname was not changed."
+            )
+
+        tracking_warning = ""
+        if member is not None:
+            try:
+                now_str = datetime.now(timezone.utc).isoformat()
+                request_id = await append_name_change_request(
+                    member.id,
+                    old_name,
+                    new_name,
+                    False,
+                    now_str,
+                )
+                await set_player_nc_data(
+                    member.id,
+                    free_used=True,
+                    last_date=now_str,
+                    row=request_id,
+                )
+                await set_name_change_request_status(request_id, "ACCEPTED")
+            except Exception as exc:
+                tracking_warning = f"Name-change tracking sheet was not updated: `{exc}`"
+
+            try:
+                await member.send(embed=success_embed(
+                    "✅ Name Change Completed",
+                    f"Your name was changed by staff.\n"
+                    f"**{old_name}** → **{new_name}**",
+                ))
+            except discord.Forbidden:
+                pass   # Player has DMs closed
+
+        if nick_updated:
+            result_embed = success_embed(
+                "✅ Name Changed",
+                f"**{discord.utils.escape_markdown(old_name)}** → "
+                f"**{discord.utils.escape_markdown(new_name)}**",
+            )
+            if tracking_warning:
+                result_embed.add_field(name="⚠️ Warning", value=tracking_warning, inline=False)
+            await status_msg.edit(content=None, embed=result_embed)
+        else:
+            e = warning_embed(
+                "⚠️ Partially Updated",
+                f"**{discord.utils.escape_markdown(old_name)}** → "
+                f"**{discord.utils.escape_markdown(new_name)}**"
+                f"• Discord nickname: {nick_error}",
+            )
+            if tracking_warning:
+                e.add_field(name="⚠️ Warning", value=tracking_warning, inline=False)
+            await status_msg.edit(content=None, embed=e)
     
 
 async def setup(bot: commands.Bot):
