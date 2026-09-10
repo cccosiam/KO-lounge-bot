@@ -10,6 +10,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import io
 import aiohttp
 import json
+import re
 from datetime import date
 from typing import Optional
 
@@ -295,6 +296,15 @@ class PenaltyRequestView(discord.ui.View):
         for item in self.children:
             item.disabled = True
 
+    def _resolve_player_name(self, interaction: discord.Interaction) -> str:
+        """Resolve a stored Discord mention to the member's sheet name."""
+        match = re.fullmatch(r"<@!?(\d+)>", self.player_name.strip())
+        if match:
+            member = interaction.guild.get_member(int(match.group(1)))
+            if member is not None:
+                return member.display_name
+        return self.player_name
+
     # ── Apply Penalty ─────────────────────────────────────────────────────────
 
     @discord.ui.button(label="Penalty", style=discord.ButtonStyle.primary,
@@ -307,11 +317,9 @@ class PenaltyRequestView(discord.ui.View):
             return 
 
         await interaction.response.defer()
-        # result = await _apply_penalty(self.player_name, self.reason)
-
-        embed = interaction.message.embeds[0]
-        player = next(f.value for f in embed.fields if f.name == "Reported Player")
+        player = self._resolve_player_name(interaction)
         result = await _apply_penalty(player, self.reason)
+        embed = interaction.message.embeds[0]
         if result["success"]:
             embed.color = discord.Color.red()
             embed.add_field(
@@ -356,7 +364,10 @@ class PenaltyRequestView(discord.ui.View):
             return
 
         await interaction.response.defer()
-        result = await _apply_strike(self.player_name, self.reason)
+        result = await _apply_strike(
+            self._resolve_player_name(interaction),
+            self.reason,
+        )
 
         embed = interaction.message.embeds[0]
         if result["success"]:
