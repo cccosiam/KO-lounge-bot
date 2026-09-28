@@ -626,27 +626,42 @@ class Tables(commands.Cog):
         def display_name(name: str, country: str) -> str:
             return f"{name} [{country}]" if country else name
 
-        table_text = (
-            f"#title Tier {tier}\n"
-            "Results #9A78FA\n"
-        )
+        if size == 1:
+            table_text = (
+                f"#title Tier {tier} FFA\n"
+                "FFA - Free for All #FFAC1C\n"
+            )
+            ffa_players = sorted(
+                zip(all_players, good_names, country_codes),
+                key=lambda row: row[0]["score"],
+                reverse=True,
+            )
+            for player, good_name, country in ffa_players:
+                table_text += (
+                    f"{display_name(good_name, country)} {player['score']}\n"
+                )
+        else:
+            table_text = (
+                f"#title Tier {tier}\n"
+                "Results #9A78FA\n"
+            )
 
-        player_index = 0
-        for team, team_good_names in zip(
-            teams,
-            [
-                good_names[
-                    sum(len(t["players"]) for t in teams[:i]):
-                    sum(len(t["players"]) for t in teams[:i + 1])
+            player_index = 0
+            for team, team_good_names in zip(
+                teams,
+                [
+                    good_names[
+                        sum(len(t["players"]) for t in teams[:i]):
+                        sum(len(t["players"]) for t in teams[:i + 1])
+                    ]
+                    for i in range(len(teams))
                 ]
-                for i in range(len(teams))
-            ]
-        ):
-            table_text += f"{team['tag']}\n"
+            ):
+                table_text += f"{team['tag']}\n"
 
-            for player, good_name in zip(team["players"], team_good_names):
-                table_text += f"{display_name(good_name, country_codes[player_index])} {player['score']}\n"
-                player_index += 1
+                for player, good_name in zip(team["players"], team_good_names):
+                    table_text += f"{display_name(good_name, country_codes[player_index])} {player['score']}\n"
+                    player_index += 1
 
         image_url = (
             "https://gb2.hlorenzi.com/table.png?data="
