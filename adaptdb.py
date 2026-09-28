@@ -3,7 +3,13 @@ import asyncio
 
 async def migrate():
     async with aiosqlite.connect('updating.db') as db:
-        await db.execute("ALTER TABLE updated ADD COLUMN placements TEXT DEFAULT ''")
+        for column_name in ("placements", "scores"):
+            try:
+                await db.execute(
+                    f"ALTER TABLE updated ADD COLUMN {column_name} TEXT DEFAULT ''"
+                )
+            except aiosqlite.OperationalError:
+                pass
         await db.commit()
 
 asyncio.run(migrate())

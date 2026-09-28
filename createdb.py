@@ -22,7 +22,8 @@ c.execute("""CREATE TABLE updated(
     colids TEXT,
     peakChanges TEXT,
     msgid INTEGER,
-    tier TEXT
+    tier TEXT,
+    scores TEXT DEFAULT ''
 )""")
 
 #c.execute("SELECT * from tables")

@@ -591,23 +591,24 @@ class Updating(commands.Cog):
         # peakChangesStr = ",".join([",".join(map(str, change)) for change in peakChanges])
         peakChangesStr = ""
         placements_str = ",".join(str(p) for p in placements)
+        scores_str = ",".join(str(score) for score in scores)
         oldmmrs_str = ",".join(str(val) for val in oldMMRs)
         newmmrs_str = ",".join(str(val) for val in newMMRs)
         msgid_for_db = sentmsg.id
-        db_entry = (idNum, rowNumStr, colNumStr, peakChangesStr, msgid_for_db, tier.upper(), placements_str, oldmmrs_str, newmmrs_str)
+        db_entry = (idNum, rowNumStr, colNumStr, peakChangesStr, msgid_for_db, tier.upper(), placements_str, oldmmrs_str, newmmrs_str, scores_str)
         
         db = None 
         try:
             db = await aiosqlite.connect('updating.db')
             c = await db.cursor()
-            for column_name in ("oldmmrs", "newmmrs"):
+            for column_name in ("oldmmrs", "newmmrs", "scores"):
                 try:
                     await c.execute(f"ALTER TABLE updated ADD COLUMN {column_name} TEXT DEFAULT ''")
                 except sqlite3.OperationalError:
                     pass
             await c.execute("""INSERT INTO updated
-                            (tableid, rowids, colids, peakChanges, msgid, tier, placements, oldmmrs, newmmrs)
-                            VALUES (?,?,?,?,?,?,?,?,?)
+                            (tableid, rowids, colids, peakChanges, msgid, tier, placements, oldmmrs, newmmrs, scores)
+                            VALUES (?,?,?,?,?,?,?,?,?,?)
                             """, db_entry)
             await db.commit()
             # Post to updating log if configured
