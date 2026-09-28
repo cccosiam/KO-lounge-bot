@@ -413,9 +413,9 @@ class Tables(commands.Cog):
 
         tier = "SQ"
 
-        if size < 2:
+        if size < 1:
             await ctx.send(
-                "The Squad Queue format must contain at least 2 players per team."
+                "The Squad Queue format must contain at least 1 player per team."
             )
             return
 
