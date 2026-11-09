@@ -595,6 +595,7 @@ class Penalties(commands.Cog):
         penalty_type="Type of penalty you want to report someone for",
         player="The name of the player you are reporting",
         table_id="The ID of the table/match where this occurred",
+        proof="Photo proof for this penalty request",
         reason="Additional context you would like to provide to staff (optional)",
     )
     @app_commands.choices(penalty_type=[
@@ -616,9 +617,16 @@ class Penalties(commands.Cog):
         penalty_type: app_commands.Choice[str],
         player: str,
         table_id: str,
+        proof: discord.Attachment,
         reason: Optional[str] = None,
     ):
         await interaction.response.defer(ephemeral=True)
+
+        if not proof.content_type or not proof.content_type.startswith("image/"):
+            await interaction.followup.send(
+                "Please attach an image as proof.", ephemeral=True
+            )
+            return
 
         try:
             table_id_value = int(table_id)
@@ -649,7 +657,18 @@ class Penalties(commands.Cog):
         embed.add_field(name="Table Status",    value=table_status,             inline=True)
         embed.add_field(name="Penalty Type",    value=penalty_type.name,        inline=False)
         embed.add_field(name="Reason/Info",     value=reason_str,               inline=False)
+        embed.set_image(url=f"attachment://{proof.filename}")
         embed.set_footer(text=f"User ID: {interaction.user.id}")
+
+        try:
+            proof_file = await proof.to_file()
+        except discord.HTTPException:
+            await interaction.followup.send(
+                "Could not read the proof image. Please try submitting again.\n"
+                "証拠の画像を読み取れませんでした。もう一度送信してください。 ",
+                ephemeral=True,
+            )
+            return
 
         view = PenaltyRequestView(
             player_name=player,
@@ -660,7 +679,7 @@ class Penalties(commands.Cog):
         )
 
         try:
-            await log_channel.send(embed=embed, view=view)
+            await log_channel.send(embed=embed, view=view, file=proof_file)
             await interaction.followup.send(
                 "✅ Your penalty request has been submitted for staff review.", ephemeral=True
             )

@@ -752,15 +752,18 @@ class Tables(commands.Cog):
         finally:
             await db.close()
 
-        async with aiohttp.ClientSession() as session:
-            async with session.get(image_url) as resp:
-
-                if resp.status != 200:
-                    await ctx.send("Could not download the table image.")
-                    return
-
-                file_data = io.BytesIO(await resp.read())
-                f = discord.File(file_data, filename="MogiTable.png")
+        f = None
+        image_error = None
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(image_url) as resp:
+                    if resp.status == 200:
+                        file_data = io.BytesIO(await resp.read())
+                        f = discord.File(file_data, filename="MogiTable.png")
+                    else:
+                        image_error = f"Lorenzi returned HTTP {resp.status}"
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            image_error = str(exc)
 
         result_embed = discord.Embed(
             title="SQ Table",
@@ -778,7 +781,8 @@ class Tables(commands.Cog):
             value=ctx.author.mention
         )
 
-        result_embed.set_image(url="attachment://MogiTable.png")
+        if f is not None:
+            result_embed.set_image(url="attachment://MogiTable.png")
 
         tier_channel = ctx.guild.get_channel(channels[tier.upper()])
 
@@ -786,10 +790,10 @@ class Tables(commands.Cog):
             if tier_channel is None:
                 raise ValueError(f"No channel found for tier {tier}")
 
-            table_msg = await tier_channel.send(
-                file=f,
-                embed=result_embed
-            )
+            send_kwargs = {"embed": result_embed}
+            if f is not None:
+                send_kwargs["file"] = f
+            table_msg = await tier_channel.send(**send_kwargs)
 
         except (discord.HTTPException, aiohttp.ClientError, OSError) as exc:
 

@@ -100,150 +100,150 @@ def _generate_mmr_table_image(
     promotion_labels: list | None = None,
     scores: list | None = None,
     output_filename: str = "MMRTable.png"
-) -> Path:
-    """
-    Generates an image of the MMR table using matplotlib and pandas.
-    This function is synchronous and should be run in an executor.
-    """
-    
-    table_data = []
-    current_placement_idx = 0
+    ) -> Path:
+        """
+        Generates an image of the MMR table using matplotlib and pandas.
+        This function is synchronous and should be run in an executor.
+        """
+        
+        table_data = []
+        current_placement_idx = 0
 
-    font_path = Path(__file__).parent.parent / "assets" / "fonts" / "Titillium_Web" / "TitilliumWeb-Regular.ttf"
-    font_path_bold = Path(__file__).parent.parent / "assets" / "fonts" / "Titillium_Web" / "TitilliumWeb-Bold.ttf"
-    font_manager.fontManager.addfont(str(font_path))
-    font_manager.fontManager.addfont(str(font_path_bold))
-    table_font = font_manager.FontProperties(fname=font_path, size=12)
-    table_font_bold = font_manager.FontProperties(fname=font_path_bold, size=12)
-    plt.rcParams['font.family'] = table_font.get_name()
+        font_path = Path(__file__).parent.parent / "assets" / "fonts" / "Titillium_Web" / "TitilliumWeb-Regular.ttf"
+        font_path_bold = Path(__file__).parent.parent / "assets" / "fonts" / "Titillium_Web" / "TitilliumWeb-Bold.ttf"
+        font_manager.fontManager.addfont(str(font_path))
+        font_manager.fontManager.addfont(str(font_path_bold))
+        table_font = font_manager.FontProperties(fname=font_path, size=12)
+        table_font_bold = font_manager.FontProperties(fname=font_path_bold, size=12)
+        plt.rcParams['font.family'] = table_font.get_name()
 
-    if tier.upper() == "SQ":
-        headers = ["Rank", "Player", "Score", "Peak", "Old MMR", "+/-", "New MMR", "Promotions"]
-    else:
-        headers = ["Rank", "Player", "Peak", "Old MMR", "+/-", "New MMR", "Promotions"]
-
-    for i in range(len(good_names)):
-        row = []
-        if i % size == 0:
-            row.append(str(placements[current_placement_idx]))
-            current_placement_idx += 1
-        else:
-            row.append("")
-
-        row.append(good_names[i])
         if tier.upper() == "SQ":
-            score = scores[i] if scores and i < len(scores) else "-"
-            row.append(score)
-        peak_val = peak_mmrs[i] if i < len(peak_mmrs) else "N/A"
-        row.append(peak_val if peak_val != "N/A" else "-")
-        row.append(old_mmrs[i])
-        change = mmr_changes[i]
-        row.append(f"+{change}" if isinstance(change, int) and change > 0 else str(change))
-        row.append(new_mmrs[i])
-        row.append(promotion_labels[i] if promotion_labels and i < len(promotion_labels) else "")
-        table_data.append(row)
-
-    color_bg = "#241C3D" # Dark purple
-
-    fig, ax = plt.subplots(figsize=(8.6, 9), facecolor=color_bg)
-    if tier.upper() == "SQ":
-        fig, ax = plt.subplots(figsize=(9.5, 9), facecolor=color_bg)
-    ax.set_facecolor(color_bg)
-    ax.axis('off')
-
-    the_table = ax.table(
-        cellText=table_data,
-        colLabels=headers,
-        cellLoc='center',
-        loc='center',
-        bbox=[0.0, 0.0, 1.0, 1.0],
-        edges='closed' 
-    )
-
-    the_table.auto_set_font_size(False)
-    the_table.set_fontsize(13)
-
-    cells = the_table.get_celld()
-    if tier.upper() != "SQ":
-        place_col, name_col, peak_col, old_col, change_col, new_col, promo_col = range(7)
-    else:
-        place_col, name_col, score_col, peak_col, old_col, change_col, new_col, promo_col = range(8)
-
-    column_widths = {
-        place_col: 0.08,
-        name_col: 0.30,
-        peak_col: 0.10, 
-        old_col: 0.12, 
-        change_col: 0.09, 
-        new_col: 0.12,
-        promo_col: 0.20
-    }
-    if tier.upper() == "SQ":
-        column_widths = {
-            place_col: 0.08,  # Placement
-            name_col: 0.28,  # Player Name
-            score_col: 0.09,  # Score
-            peak_col: 0.10,  # Peak MMR
-            old_col: 0.12,  # Old MMR
-            change_col: 0.09,  # Change
-            new_col: 0.12,  # New MMR
-            promo_col: 0.19   # Promotions
-        }
-
-    header_color = '#3A2E62'  # Dark Purple
-    border_color = '#2C2C2C' # Gray
-    cell_color = '#5C4A9A'  # Ourple
-    player_cell_color = '#212121'  # Dark Gray
-    MAX_GREEN = mcolors.to_rgb('#548235') # Strong Green
-    MAX_RED = mcolors.to_rgb('#C00000')   # Strong Red
-    NEUTRAL_WHITE = mcolors.to_rgb('#FFFFFF')
-    text_white = '#FFFFFF'
-    text_black = '#000000'
-
-    for (row_idx, col_idx), cell in cells.items():
-        cell.set_edgecolor(border_color)
-        cell.set_facecolor(cell_color)
-        cell_text = cell.get_text()
-        cell_text.set_color(text_white)
-        if col_idx in column_widths:
-            cell.set_width(column_widths[col_idx])
-        text = cell.get_text().get_text()
-        if row_idx == 0: # Header row
-            cell.set_height(1.03)
-            cell.set_facecolor(header_color)
-            cell.get_text().set_fontsize(12.5)
+            headers = ["Rank", "Player", "Score", "Peak", "Old MMR", "+/-", "New MMR", "Promotions"]
         else:
-            cell.set_height(1.1)
-            if col_idx == name_col: 
-                cell.set_facecolor(player_cell_color)
-            if col_idx == new_col:
-                cell.get_text().set_fontproperties(table_font_bold)
-                cell.get_text().set_fontsize(13)
-            if col_idx == change_col:
-                cell.set_facecolor(player_cell_color)
-                raw_text = cell.get_text().get_text()
-                try:
-                    val = int(raw_text.replace('+', '').replace(' ', ''))
-                    max_change = 200 if tier.upper() == "SQ" else 75
-                    intensity = min(abs(val) / max_change, 1.0)
-                    if val > 0:
-                        new_color = [NEUTRAL_WHITE[i] + (MAX_GREEN[i] - NEUTRAL_WHITE[i]) * intensity for i in range(3)]
-                    elif val < 0:
-                        new_color = [NEUTRAL_WHITE[i] + (MAX_RED[i] - NEUTRAL_WHITE[i]) * intensity for i in range(3)]
-                    else:
-                        new_color = NEUTRAL_WHITE
-                    cell.get_text().set_color(new_color)
-                except ValueError:
-                    cell.get_text().set_color(NEUTRAL_WHITE)
-    format_label = "Free For All" if size == 1 else f"{size}v{size}"
-    plt.title(f"Tier {tier.upper()} {format_label} Results", fontsize=18, pad=13, color=text_white)
-    plt.figtext(0.5, 0.085, f"ID: {id_num}  |  Rallies: {races}  |  Updated on {date.today()}", 
-                ha="center", color=text_white, fontsize=11, bbox={"facecolor":"#121212", "alpha":0.2, "pad":5})
+            headers = ["Rank", "Player", "Peak", "Old MMR", "+/-", "New MMR", "Promotions"]
 
-    output_path = Path(output_filename)
-    plt.savefig(output_path, bbox_inches='tight', dpi=300)
-    plt.close(fig)
-    return output_path
+        for i in range(len(good_names)):
+            row = []
+            if i % size == 0:
+                row.append(str(placements[current_placement_idx]))
+                current_placement_idx += 1
+            else:
+                row.append("")
+
+            row.append(good_names[i])
+            if tier.upper() == "SQ":
+                score = scores[i] if scores and i < len(scores) else "-"
+                row.append(score)
+            peak_val = peak_mmrs[i] if i < len(peak_mmrs) else "N/A"
+            row.append(peak_val if peak_val != "N/A" else "-")
+            row.append(old_mmrs[i])
+            change = mmr_changes[i]
+            row.append(f"+{change}" if isinstance(change, int) and change > 0 else str(change))
+            row.append(new_mmrs[i])
+            row.append(promotion_labels[i] if promotion_labels and i < len(promotion_labels) else "")
+            table_data.append(row)
+
+        color_bg = "#241C3D" # Dark purple
+
+        fig, ax = plt.subplots(figsize=(8.6, 9), facecolor=color_bg)
+        if tier.upper() == "SQ":
+            fig, ax = plt.subplots(figsize=(9.5, 9), facecolor=color_bg)
+        ax.set_facecolor(color_bg)
+        ax.axis('off')
+
+        the_table = ax.table(
+            cellText=table_data,
+            colLabels=headers,
+            cellLoc='center',
+            loc='center',
+            bbox=[0.0, 0.0, 1.0, 1.0],
+            edges='closed' 
+        )
+
+        the_table.auto_set_font_size(False)
+        the_table.set_fontsize(13)
+
+        cells = the_table.get_celld()
+        if tier.upper() != "SQ":
+            place_col, name_col, peak_col, old_col, change_col, new_col, promo_col = range(7)
+        else:
+            place_col, name_col, score_col, peak_col, old_col, change_col, new_col, promo_col = range(8)
+
+        column_widths = {
+            place_col: 0.08,
+            name_col: 0.30,
+            peak_col: 0.10, 
+            old_col: 0.12, 
+            change_col: 0.09, 
+            new_col: 0.12,
+            promo_col: 0.20
+        }
+        if tier.upper() == "SQ":
+            column_widths = {
+                place_col: 0.08,  # Placement
+                name_col: 0.28,  # Player Name
+                score_col: 0.09,  # Score
+                peak_col: 0.10,  # Peak MMR
+                old_col: 0.12,  # Old MMR
+                change_col: 0.09,  # Change
+                new_col: 0.12,  # New MMR
+                promo_col: 0.19   # Promotions
+            }
+
+        header_color = '#3A2E62'  # Dark Purple
+        border_color = '#2C2C2C' # Gray
+        cell_color = '#5C4A9A'  # Ourple
+        player_cell_color = '#212121'  # Dark Gray
+        MAX_GREEN = mcolors.to_rgb('#548235') # Strong Green
+        MAX_RED = mcolors.to_rgb('#C00000')   # Strong Red
+        NEUTRAL_WHITE = mcolors.to_rgb('#FFFFFF')
+        text_white = '#FFFFFF'
+        text_black = '#000000'
+
+        for (row_idx, col_idx), cell in cells.items():
+            cell.set_edgecolor(border_color)
+            cell.set_facecolor(cell_color)
+            cell_text = cell.get_text()
+            cell_text.set_color(text_white)
+            if col_idx in column_widths:
+                cell.set_width(column_widths[col_idx])
+            text = cell.get_text().get_text()
+            if row_idx == 0: # Header row
+                cell.set_height(1.03)
+                cell.set_facecolor(header_color)
+                cell.get_text().set_fontsize(12.5)
+            else:
+                cell.set_height(1.1)
+                if col_idx == name_col: 
+                    cell.set_facecolor(player_cell_color)
+                if col_idx == new_col:
+                    cell.get_text().set_fontproperties(table_font_bold)
+                    cell.get_text().set_fontsize(13)
+                if col_idx == change_col:
+                    cell.set_facecolor(player_cell_color)
+                    raw_text = cell.get_text().get_text()
+                    try:
+                        val = int(raw_text.replace('+', '').replace(' ', ''))
+                        max_change = 200 if tier.upper() == "SQ" else 75
+                        intensity = min(abs(val) / max_change, 1.0)
+                        if val > 0:
+                            new_color = [NEUTRAL_WHITE[i] + (MAX_GREEN[i] - NEUTRAL_WHITE[i]) * intensity for i in range(3)]
+                        elif val < 0:
+                            new_color = [NEUTRAL_WHITE[i] + (MAX_RED[i] - NEUTRAL_WHITE[i]) * intensity for i in range(3)]
+                        else:
+                            new_color = NEUTRAL_WHITE
+                        cell.get_text().set_color(new_color)
+                    except ValueError:
+                        cell.get_text().set_color(NEUTRAL_WHITE)
+        format_label = "Free For All" if size == 1 else f"{size}v{size}"
+        plt.title(f"Tier {tier.upper()} {format_label} Results", fontsize=18, pad=13, color=text_white)
+        plt.figtext(0.5, 0.085, f"ID: {id_num}  |  Rallies: {races}  |  Updated on {date.today()}", 
+                    ha="center", color=text_white, fontsize=11, bbox={"facecolor":"#121212", "alpha":0.2, "pad":5})
+
+        output_path = Path(output_filename)
+        plt.savefig(output_path, bbox_inches='tight', dpi=300)
+        plt.close(fig)
+        return output_path
 
 
 class Updating(commands.Cog):
@@ -634,7 +634,216 @@ class Updating(commands.Cog):
         finally:
             if db: await db.close()
 
+        @commands.command(name="preview")
+        @commands.has_any_role("Administrator", "Updater", "Staff-S")
+        async def preview_render(self, ctx, size: int = 2, tier: str = "A"):
+            """
+            Generates a dummy table image to test the visual layout 
+            without touching the spreadsheet or database.
+            """
+            await ctx.send(f"Generating a preview for Tier {tier.upper()} ({size}v{size})...")
+
+            # 1. Generate Dummy Data based on num_players (e.g., 24)
+            # We use some fun placeholder names to see how font scaling looks
+            dummy_names = [f"Player {i+1}" for i in range(num_players)]
+            dummy_names[0] = "VeryLongNameTestAAAAAAAA" 
+            dummy_names[1] = "Short"
+
+            # Mock MMR values
+            dummy_old_mmrs = [5000 + (i * 10) for i in range(num_players)]
+            dummy_changes = [random.randint(-50, 50) for _ in range(num_players)]
+            dummy_new_mmrs = [old + ch for old, ch in zip(dummy_old_mmrs, dummy_changes)]
+            dummy_peaks = [max(new + 100, 6000) for new in dummy_new_mmrs]
             
+            # Mock Placements
+            # For a 2v2 (size 2), we'd have 12 placements
+            dummy_placements = [i + 1 for i in range(int(num_players / size))]
+
+            image_output_path = Path("preview_table.png")
+
+            # 2. Call your existing rendering function in an executor
+            try:
+                loop = asyncio.get_running_loop()
+                render_task = functools.partial(
+                    _generate_mmr_table_image, # Assuming this is your helper function
+                    size=size,
+                    tier=tier,
+                    good_names=dummy_names,
+                    placements=dummy_placements,
+                    peak_mmrs=dummy_peaks,
+                    old_mmrs=dummy_old_mmrs,
+                    mmr_changes=dummy_changes,
+                    new_mmrs=dummy_new_mmrs,
+                    races=12,
+                    id_num=999,
+                    output_filename=image_output_path
+                )
+                await loop.run_in_executor(None, render_task)
+
+                # 3. Send the file to Discord
+                file = discord.File(image_output_path, filename="preview.png")
+                embed = discord.Embed(title="🖼️ Table Render Preview", color=discord.Color.blue())
+                embed.set_image(url="attachment://preview.png")
+                embed.set_footer(text="This is a dummy render for visual testing only.")
+                
+                await ctx.send(file=file, embed=embed)
+
+            except Exception as e:
+                logger.error(f"Preview render failed: {e}", exc_info=True)
+                await ctx.send(f"❌ Preview failed: {e}")
+
+    @commands.command(name="fixid")
+    @commands.max_concurrency(number=1, wait=True)
+    @commands.has_any_role("Administrator", "Updater", "Lounge Staff")
+    async def fixid(self, ctx, new_id: int):
+        if ctx.guild.id != self.config["server"]:
+            await ctx.send("You cannot use this command in this server!", delete_after=10)
+            return
+        if new_id < 1:
+            await ctx.send("The table ID must be a positive number.", delete_after=10)
+            return
+
+        async with aiosqlite.connect("updating.db") as db:
+            await db.execute("BEGIN IMMEDIATE")
+            async with db.execute(
+                "SELECT tableid, tier, messageid FROM tables ORDER BY messageid DESC LIMIT 1"
+            ) as cursor:
+                pending = await cursor.fetchone()
+            async with db.execute(
+                "SELECT tableid, tier, msgid FROM updated ORDER BY msgid DESC LIMIT 1"
+            ) as cursor:
+                completed = await cursor.fetchone()
+
+            candidates = []
+            if pending:
+                candidates.append(("pending", *pending))
+            if completed:
+                candidates.append(("completed", *completed))
+            if not candidates:
+                await ctx.send("There are no pending or completed tables to fix.", delete_after=10)
+                return
+
+            state, old_id, tier, message_id = max(
+                candidates, key=lambda table: (table[3] or 0, table[1])
+            )
+            if old_id == new_id:
+                await ctx.send(f"The latest table already has ID `{new_id}`.", delete_after=10)
+                return
+
+            async with db.execute(
+                "SELECT 1 FROM tables WHERE tableid = ? "
+                "UNION ALL SELECT 1 FROM updated WHERE tableid = ? LIMIT 1",
+                (new_id, new_id),
+            ) as cursor:
+                if await cursor.fetchone():
+                    await ctx.send(f"Table ID `{new_id}` is already in use.", delete_after=10)
+                    return
+
+            table_name = "tables" if state == "pending" else "updated"
+            key_column = "tableid" if state == "pending" else "msgid"
+            key_value = old_id if state == "pending" else message_id
+            await db.execute(
+                f"UPDATE {table_name} SET tableid = ? WHERE {key_column} = ?",
+                (new_id, key_value),
+            )
+            if state == "pending":
+                await db.execute(
+                    "UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = 'tables'",
+                    (new_id,),
+                )
+            await db.commit()
+
+        warnings = []
+        try:
+            agc = await agcm.authorize()
+            sh = await agc.open_by_key(SH_KEY)
+            id_sheet = await sh.worksheet("ID")
+            id_cell = await id_sheet.acell("A1")
+            current_id = int(id_cell.value) if id_cell.value else 0
+            if new_id > current_id:
+                await id_sheet.update_cell(1, 1, new_id)
+        except Exception as exc:
+            logger.error("Could not update the Google Sheets ID counter: %s", exc, exc_info=True)
+            warnings.append("Google Sheets ID counter could not be updated")
+
+        channel = ctx.guild.get_channel(channels.get(tier.upper(), 0))
+        if channel and message_id:
+            try:
+                table_message = await channel.fetch_message(message_id)
+                if table_message.embeds:
+                    embed = table_message.embeds[0]
+                    id_field = next(
+                        (index for index, field in enumerate(embed.fields) if field.name == "ID"),
+                        None,
+                    )
+                    if id_field is None:
+                        embed.add_field(name="ID", value=str(new_id), inline=True)
+                    else:
+                        field = embed.fields[id_field]
+                        embed.set_field_at(
+                            id_field, name=field.name, value=str(new_id), inline=field.inline
+                        )
+                    await table_message.edit(embed=embed)
+            except Exception as exc:
+                logger.error("Could not update the table message ID: %s", exc, exc_info=True)
+                warnings.append("the Discord table embed could not be updated")
+
+        message = f"Fixed the latest {state} table ID from `{old_id}` to `{new_id}`."
+        if state == "completed":
+            warnings.append("the ID printed inside its attached MMR image remains unchanged")
+        if warnings:
+            message += "\nWarning: " + "; ".join(warnings) + "."
+        await ctx.send(message)
+
+    @commands.command(name="viewid")
+    @commands.max_concurrency(number=1, wait=True)
+    @commands.has_any_role("Administrator", "Updater", "Lounge Staff")
+    async def viewid(self, ctx):
+        if ctx.guild.id != self.config["server"]:
+            await ctx.send("You cannot use this command in this server!", delete_after=10)
+            return
+
+        async with aiosqlite.connect("updating.db") as db:
+            async with db.execute(
+                "SELECT tableid, messageid FROM tables ORDER BY messageid DESC LIMIT 1"
+            ) as cursor:
+                pending = await cursor.fetchone()
+            async with db.execute(
+                "SELECT tableid, msgid FROM updated ORDER BY msgid DESC LIMIT 1"
+            ) as cursor:
+                completed = await cursor.fetchone()
+
+        candidates = []
+        if pending:
+            candidates.append(("pending", *pending))
+        if completed:
+            candidates.append(("completed", *completed))
+        latest = max(candidates, key=lambda table: (table[2] or 0, table[1])) if candidates else None
+        database_id = latest[1] if latest else None
+        database_state = latest[0] if latest else None
+
+        try:
+            agc = await agcm.authorize()
+            sh = await agc.open_by_key(SH_KEY)
+            id_sheet = await sh.worksheet("ID")
+            id_cell = await id_sheet.acell("A1")
+            sheets_id = int(id_cell.value) if id_cell.value else 0
+        except Exception as exc:
+            logger.error("Could not read the Google Sheets ID counter: %s", exc, exc_info=True)
+            database_value = f"`{database_id}` ({database_state})" if database_id is not None else "no table found"
+            await ctx.send(
+                f"Latest database table ID: {database_value}\n"
+                "Google Sheets ID: unavailable (could not read `ID!A1`)."
+            )
+            return
+
+        database_value = f"`{database_id}` ({database_state})" if database_id is not None else "no table found"
+        match_status = "Match" if database_id == sheets_id else "Mismatch"
+        await ctx.send(
+            f"Latest database table ID: {database_value}\n"
+            f"Google Sheets ID (`ID!A1`): `{sheets_id}`\n"
+            f"Status: **{match_status}**"
+        )
 
     @commands.max_concurrency(number=1, wait=True)
     @commands.group(aliases=['u'])

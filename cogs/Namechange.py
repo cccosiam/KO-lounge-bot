@@ -153,9 +153,14 @@ async def append_name_change_request(
         requested_at,
         "PENDING",
     ]
-    await ws.append_row(values)
-    all_rows = await ws.get_all_values()
-    return len(all_rows)
+    result = await ws.append_row(values)
+    updated_range = result.get("updates", {}).get("updatedRange", "")
+    row_match = re.search(r"![A-Z]+(\d+):[A-Z]+(\d+)$", updated_range)
+    if not row_match or row_match.group(1) != row_match.group(2):
+        raise RuntimeError(
+            "The request was appended, but Google Sheets did not return its row range."
+        )
+    return int(row_match.group(1))
 
 async def set_player_nc_data(
     discord_id: int,
@@ -405,6 +410,38 @@ class NameChange(commands.Cog):
  
         await interaction.response.defer(ephemeral=True)
  
+        try:
+            agc = await agcm.authorize()
+            sh = await agc.open_by_key(SH_KEY)
+            player_history = await sh.worksheet("Player History")
+            registered_names = {
+                name.strip().casefold()
+                for name in await player_history.col_values(1)
+                if name.strip()
+            }
+        except Exception:
+            await interaction.followup.send(
+                embed=error_embed(
+                    "❌ Sheet Error",
+                    "I couldn't verify whether that name is available. "
+                    "Please try again later or contact staff.",
+                ),
+                ephemeral=True,
+            )
+            return
+
+        if new_name.casefold() in registered_names:
+            await interaction.followup.send(
+                embed=error_embed(
+                    "❌ Name Already Taken",
+                    f"The name **{discord.utils.escape_markdown(new_name)}** is already "
+                    "taken. Please choose a different name.\n"
+                    f"名前{discord.utils.escape_markdown(new_name)}はすでに取得されています。別の名前で申請してください。",
+                ),
+                ephemeral=True,
+            )
+            return
+
         nc_data = await get_player_nc_data(member.id)
  
         if nc_data is not None:
@@ -414,37 +451,19 @@ class NameChange(commands.Cog):
                     await interaction.followup.send(
                         embed=error_embed(
                             "⏳ Cooldown Active",
-                            f"You can request a name change in **{remaining} day(s)**.",
+                            f"You can request a name change in **{remaining} day(s)**.\n"
+                            f"名前の変更は{remaining}日以内にリクエストできます。",
                         ),
                         ephemeral=True,
                     )
                     return
-
-                try:
-                    agc = await agcm.authorize()
-                    sh  = await agc.open_by_key(SH_KEY)
-                    ws  = await sh.worksheet("Player History")
-                    name_col = await ws.col_values(1)
-                    names_lower = [v.strip().lower() for v in name_col]
-                    if new_name.strip().lower() in names_lower:
-                        await interaction.followup.send(
-                            embed=error_embed(
-                                "❌ Name Already Taken",
-                                f"The name **{discord.utils.escape_markdown(new_name)}** is already "
-                                "registered in the database. Please choose a different name.",
-                            ),
-                            ephemeral=True,
-                        )
-                        return
-                except Exception:
-                    pass
  
         if any(r["requester_id"] == member.id for r in self._pending.values()):
             await interaction.followup.send(
                 embed=warning_embed(
                     "Request Already Pending",
-                    "You already have a name change request pending review. "
-                    "Please wait for staff to process it before submitting another.",
+                    "You already have a name change request pending review.\n"
+                    "すでに名前の変更のリクエストが申請されています。",
                 ),
                 ephemeral=True,
             )
@@ -473,7 +492,8 @@ class NameChange(commands.Cog):
             await interaction.followup.send(
                 embed=error_embed(
                     "❌ Sheet Error",
-                    "Could not save your name change request. Please try again later.",
+                    "Could not save your name change request. Please contact Staff.\n"
+                    "名前の変更のリクエストを保存できませんでした。staffにご連絡ください。",
                 ),
                 ephemeral=True,
             )
