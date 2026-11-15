@@ -107,6 +107,7 @@ def _generate_mmr_table_image(
         """
         
         table_data = []
+        separator_rows = set()
         current_placement_idx = 0
 
         font_path = Path(__file__).parent.parent / "assets" / "fonts" / "Titillium_Web" / "TitilliumWeb-Regular.ttf"
@@ -117,7 +118,10 @@ def _generate_mmr_table_image(
         table_font_bold = font_manager.FontProperties(fname=font_path_bold, size=12)
         plt.rcParams['font.family'] = table_font.get_name()
 
-        if tier.upper() == "SQ":
+        has_player_scores = tier.upper() == "SQ" or (
+            scores is not None and len(scores) == len(good_names)
+        )
+        if has_player_scores:
             headers = ["Rank", "Player", "Score", "Peak", "Old MMR", "+/-", "New MMR", "Promotions"]
         else:
             headers = ["Rank", "Player", "Peak", "Old MMR", "+/-", "New MMR", "Promotions"]
@@ -131,7 +135,7 @@ def _generate_mmr_table_image(
                 row.append("")
 
             row.append(good_names[i])
-            if tier.upper() == "SQ":
+            if has_player_scores:
                 score = scores[i] if scores and i < len(scores) else "-"
                 row.append(score)
             peak_val = peak_mmrs[i] if i < len(peak_mmrs) else "N/A"
@@ -143,11 +147,25 @@ def _generate_mmr_table_image(
             row.append(promotion_labels[i] if promotion_labels and i < len(promotion_labels) else "")
             table_data.append(row)
 
+            if size > 1 and (i + 1) % size == 0 and i + 1 < len(good_names):
+                table_data.append([""] * len(headers))
+                separator_rows.add(len(table_data))
+
         color_bg = "#241C3D" # Dark purple
 
-        fig, ax = plt.subplots(figsize=(8.6, 9), facecolor=color_bg)
-        if tier.upper() == "SQ":
-            fig, ax = plt.subplots(figsize=(9.5, 9), facecolor=color_bg)
+        base_figure_height = 9
+        figure_width = 8.6
+        if has_player_scores:
+            base_figure_height = 9.5
+            figure_width = 9.5
+        base_table_height = 1.03 + 1.1 * len(good_names)
+        figure_height = base_figure_height * (
+            base_table_height + 0.25 * len(separator_rows)
+        ) / base_table_height
+
+        fig, ax = plt.subplots(
+            figsize=(figure_width, figure_height), facecolor=color_bg
+        )
         ax.set_facecolor(color_bg)
         ax.axis('off')
 
@@ -164,10 +182,10 @@ def _generate_mmr_table_image(
         the_table.set_fontsize(13)
 
         cells = the_table.get_celld()
-        if tier.upper() != "SQ":
-            place_col, name_col, peak_col, old_col, change_col, new_col, promo_col = range(7)
-        else:
+        if has_player_scores:
             place_col, name_col, score_col, peak_col, old_col, change_col, new_col, promo_col = range(8)
+        else:
+            place_col, name_col, peak_col, old_col, change_col, new_col, promo_col = range(7)
 
         column_widths = {
             place_col: 0.08,
@@ -178,7 +196,7 @@ def _generate_mmr_table_image(
             new_col: 0.12,
             promo_col: 0.20
         }
-        if tier.upper() == "SQ":
+        if has_player_scores:
             column_widths = {
                 place_col: 0.08,  # Placement
                 name_col: 0.28,  # Player Name
@@ -207,6 +225,12 @@ def _generate_mmr_table_image(
             cell_text.set_color(text_white)
             if col_idx in column_widths:
                 cell.set_width(column_widths[col_idx])
+            if row_idx in separator_rows:
+                cell.set_height(0.25)
+                cell.set_facecolor(color_bg)
+                cell.set_edgecolor(color_bg)
+                cell_text.set_color(color_bg)
+                continue
             text = cell.get_text().get_text()
             if row_idx == 0: # Header row
                 cell.set_height(1.03)
@@ -224,7 +248,7 @@ def _generate_mmr_table_image(
                     raw_text = cell.get_text().get_text()
                     try:
                         val = int(raw_text.replace('+', '').replace(' ', ''))
-                        max_change = 200 if tier.upper() == "SQ" else 75
+                        max_change = 200 
                         intensity = min(abs(val) / max_change, 1.0)
                         if val > 0:
                             new_color = [NEUTRAL_WHITE[i] + (MAX_GREEN[i] - NEUTRAL_WHITE[i]) * intensity for i in range(3)]
@@ -344,15 +368,15 @@ class Updating(commands.Cog):
             await db.commit()
 
         # Handle Reactions
-        channel_id = channels.get(tier)
-        if channel_id:
-            channel = ctx.guild.get_channel(channel_id)
-            if channel:
-                try:
-                    reactMsg = await channel.fetch_message(messageid)
-                    await reactMsg.add_reaction("\U00002611")
-                except Exception:
-                    logger.warning(f"Could not add reaction to message {messageid}")
+        channel = ctx.guild.get_channel(
+            channels["SQ"] if tier.upper() == "SQ" else channels["ALL"]
+        )
+        if channel:
+            try:
+                reactMsg = await channel.fetch_message(messageid)
+                await reactMsg.add_reaction("\U00002611")
+            except Exception:
+                logger.warning(f"Could not add reaction to message {messageid}")
         
         return True
 
@@ -367,7 +391,9 @@ class Updating(commands.Cog):
         pHistory = await sh.worksheet("Player History")
         idSheet = await sh.worksheet("ID")
         
-        channel = ctx.guild.get_channel(channels[tier.upper()])
+        channel = ctx.guild.get_channel(
+            channels["SQ"] if tier.upper() == "SQ" else channels["ALL"]
+        )
         start = sheet_start_rows[size]
 
         scores = []
@@ -766,7 +792,9 @@ class Updating(commands.Cog):
             logger.error("Could not update the Google Sheets ID counter: %s", exc, exc_info=True)
             warnings.append("Google Sheets ID counter could not be updated")
 
-        channel = ctx.guild.get_channel(channels.get(tier.upper(), 0))
+        channel = ctx.guild.get_channel(
+            channels["SQ"] if tier.upper() == "SQ" else channels["ALL"]
+        )
         if channel and message_id:
             try:
                 table_message = await channel.fetch_message(message_id)
@@ -936,7 +964,7 @@ class Updating(commands.Cog):
             
         arguments = extraArgs.split(";")
         instructions = {}
-        races = 1
+        races = 5
 
         if tier.upper() == "SQ":
             # for i in range(num_players):
@@ -986,7 +1014,9 @@ class Updating(commands.Cog):
         finally:
             if db: await db.close()
         
-        channel = ctx.guild.get_channel(channels[tier.upper()])
+        channel = ctx.guild.get_channel(
+            channels["SQ"] if tier.upper() == "SQ" else channels["ALL"]
+        )
         if channel:
             try:
                 reactMsg = await channel.fetch_message(messageid)
@@ -1045,7 +1075,7 @@ class Updating(commands.Cog):
         
         arguments = extraArgs.split(";")
         instructions = {}
-        races = 1
+        races = 5
 
         if tier.upper() == "SQ":
             # for i in range(num_players):
@@ -1106,7 +1136,9 @@ class Updating(commands.Cog):
                     return
 
                 # Step 3: Add reaction to the message
-                channel = ctx.guild.get_channel(channels[tier.upper()])
+                channel = ctx.guild.get_channel(
+                    channels["SQ"] if tier.upper() == "SQ" else channels["ALL"]
+                )
                 if channel:
                     try:
                         react_msg = await channel.fetch_message(messageid)
@@ -1222,7 +1254,9 @@ class Updating(commands.Cog):
         finally:
             if db: await db.close()
 
-        channel = ctx.guild.get_channel(channels[tier.upper()])
+        channel = ctx.guild.get_channel(
+            channels["SQ"] if tier.upper() == "SQ" else channels["ALL"]
+        )
         if channel:
             try:
                 # reactMsg = await channel.fetch_message(messageid)
@@ -1304,7 +1338,9 @@ class Updating(commands.Cog):
             await pHistory.batch_update(
                 [{'range': cell['range'], 'values': cell['values']} for cell in clearedCells]
             )
-            channel = ctx.guild.get_channel(channels[tier.upper()])
+            channel = ctx.guild.get_channel(
+                channels["SQ"] if tier.upper() == "SQ" else channels["ALL"]
+            )
             await c.execute("DELETE from updated WHERE tableid = ?", (idNum,))
             await db.commit()
             if channel:
@@ -1419,7 +1455,9 @@ class Updating(commands.Cog):
 
             await pHistory.batch_update(clear_payload)
             # Log to results channel
-            channel = ctx.guild.get_channel(channels[tier.upper()])
+            channel = ctx.guild.get_channel(
+                channels["SQ"] if tier.upper() == "SQ" else channels["ALL"]
+            )
             if channel:
                 le = discord.Embed(title="MMR Loss Reduction Applied", color=discord.Color.blue())
                 le.add_field(name="Table ID", value=str(idNum), inline=True)

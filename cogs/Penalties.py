@@ -191,9 +191,6 @@ async def _apply_strike(playername: str, reason: str = "") -> dict:
     })
     return result
 
-
-# ── Views ─────────────────────────────────────────────────────────────────────
-
 class PenaltyRequestView(discord.ui.View):
     """
     Shown on penalty request embeds in the log channel.
@@ -305,8 +302,6 @@ class PenaltyRequestView(discord.ui.View):
                 return member.display_name
         return self.player_name
 
-    # ── Apply Penalty ─────────────────────────────────────────────────────────
-
     @discord.ui.button(label="Penalty", style=discord.ButtonStyle.primary,
                        custom_id="pen_apply_penalty")
     async def apply_penalty(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -351,8 +346,6 @@ class PenaltyRequestView(discord.ui.View):
 
         self._disable_all()
         await interaction.message.edit(embed=embed, view=self)
-
-    # ── Apply Strike ──────────────────────────────────────────────────────────
 
     @discord.ui.button(label="Strike", style=discord.ButtonStyle.primary,
                        custom_id="pen_apply_strike")
@@ -424,8 +417,6 @@ class PenaltyRequestView(discord.ui.View):
         self._disable_all()
         await interaction.message.edit(embed=embed, view=self)
 
-    # ── Deny ──────────────────────────────────────────────────────────────────
-
     @discord.ui.button(label="Deny", style=discord.ButtonStyle.secondary,
                        custom_id="pen_deny")
     async def deny(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -445,8 +436,6 @@ class PenaltyRequestView(discord.ui.View):
         self._disable_all()
         await interaction.response.edit_message(embed=embed, view=self)
         await self._send_reporter_dm(interaction.guild, "denied")
-
-    # ── Resolved ──────────────────────────────────────────────────────────────
 
     @discord.ui.button(label="Dismiss", style=discord.ButtonStyle.secondary,
                        custom_id="pen_resolved")
@@ -556,8 +545,6 @@ class MMRReductionView(discord.ui.View):
         await interaction.message.delete()
 
 
-# ── Cog ───────────────────────────────────────────────────────────────────────
-
 class Penalties(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -584,8 +571,6 @@ class Penalties(commands.Cog):
         finally:
             await db.close()
         return status
-
-    # ── /request_penalty ──────────────────────────────────────────────────────
 
     @app_commands.command(
         name="request_penalty",

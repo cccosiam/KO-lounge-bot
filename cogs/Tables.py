@@ -13,7 +13,7 @@ import io
 import aiohttp
 import json
 
-from constants import (channels, general_channels, key_channels, ranks, num_players, SH_KEY, LOOKUP_KEY)
+from constants import (channels, general_channels, key_channels, tiers, ranks, num_players, SH_KEY, LOOKUP_KEY)
 
 def get_creds():
     return ServiceAccountCredentials.from_json_keyfile_name(
@@ -364,7 +364,7 @@ class Tables(commands.Cog):
     @commands.command(name="submit")
     @commands.max_concurrency(number=1, wait=True)
     @commands.cooldown(3, 60, commands.BucketType.member)
-    async def submit(self, ctx, size: int, *, data: str):
+    async def submit(self, ctx, size: int, tier: str, *, data: str):
         """
         Submit a Squad Queue table.
 
@@ -404,18 +404,23 @@ class Tables(commands.Cog):
 
         channel_name = (ctx.channel.name or "").lower()
 
-        if not channel_name.startswith("sq"):
+        if not channel_name.startswith("sq") and not channel_name[:1].isdigit():
             await ctx.send(
-                "This command can only be used in an SQ thread.",
+                "This command can only be used in a mogi thread.",
                 delete_after=10
             )
             return
 
-        tier = "SQ"
-
         if size < 1:
             await ctx.send(
                 "The Squad Queue format must contain at least 1 player per team."
+            )
+            return
+
+        tier = tier.upper()
+        if tier not in tiers:
+            await ctx.send(
+                f"Invalid tier: `{tier}`. "
             )
             return
 
@@ -436,7 +441,16 @@ class Tables(commands.Cog):
             re.IGNORECASE
         )
 
-        lines = [line.strip() for line in data.splitlines()]
+        lines = [line.strip() for line in data.splitlines() if line.strip()]
+        if lines and not any(team_header_pattern.match(line) for line in lines):
+            normalized_lines = []
+            for player_index, line in enumerate(lines):
+                if player_index % size == 0:
+                    team_number = player_index // size + 1
+                    team_tag = chr(ord("A") + team_number - 1)
+                    normalized_lines.append(f"Team {team_number} - {team_tag}")
+                normalized_lines.append(line)
+            lines = normalized_lines
 
         teams = []
         current_team = None
@@ -541,7 +555,7 @@ class Tables(commands.Cog):
 
         if invalid_teams:
             await ctx.send(
-                "**Invalid Squad Queue table**\n\n"
+                "**Invalid mogi table**\n\n"
                 + "\n".join(invalid_teams)
             )
             return
@@ -668,7 +682,7 @@ class Tables(commands.Cog):
             + urllib.parse.quote(table_text)
         )
         
-        e = discord.Embed(title="SQ Table")
+        e = discord.Embed(title="Mogi Table")
         e.set_image(url=image_url)
 
         content = (
@@ -766,7 +780,7 @@ class Tables(commands.Cog):
             image_error = str(exc)
 
         result_embed = discord.Embed(
-            title="SQ Table",
+            title="Mogi Table",
             colour=int("625B09", 16)
         )
 
