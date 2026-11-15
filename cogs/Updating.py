@@ -275,6 +275,55 @@ class Updating(commands.Cog):
         self.bot = bot
         self.config = bot.config 
 
+    async def _write_score_history(self, score_sheet, player_names, scores, table_id):
+        if not table_id:
+            return
+        if len(player_names) != len(scores):
+            raise ValueError("Player names and scores must have matching lengths.")
+
+        existing_names = await score_sheet.col_values(1)
+        rows_by_name = {
+            name.strip().casefold(): row
+            for row, name in enumerate(existing_names, start=1)
+            if name and name.strip()
+        }
+        headers = await score_sheet.row_values(1)
+        table_header = str(table_id)
+        score_column = next(
+            (
+                column
+                for column, value in enumerate(headers, start=1)
+                if column > 1 and str(value).strip() == table_header
+            ),
+            max(2, len(headers) + 1),
+        )
+
+        updates = []
+        if score_column > len(headers):
+            updates.append({
+                "range": rowcol_to_a1(1, score_column),
+                "values": [[table_header]],
+            })
+
+        next_row = len(existing_names) + 1
+        for player_name, score in zip(player_names, scores):
+            row = rows_by_name.get(player_name.strip().casefold())
+            if row is None:
+                row = next_row
+                next_row += 1
+                rows_by_name[player_name.strip().casefold()] = row
+                updates.append({
+                    "range": rowcol_to_a1(row, 1),
+                    "values": [[player_name]],
+                })
+            updates.append({
+                "range": rowcol_to_a1(row, score_column),
+                "values": [[score]],
+            })
+
+        if updates:
+            await score_sheet.batch_update(updates)
+
     async def _apply_rank_change_for_player(self, ctx, player_name: str, old_mmr, new_mmr):
         try:
             old_mmr_value = int(old_mmr)
@@ -389,51 +438,50 @@ class Updating(commands.Cog):
         sh = await agc.open_by_key(SH_KEY)
         botSheet = await sh.worksheet("Bot")
         pHistory = await sh.worksheet("Player History")
+        sHistory = await sh.worksheet("Score History")
         idSheet = await sh.worksheet("ID")
         
-        channel = ctx.guild.get_channel(
-            channels["SQ"] if tier.upper() == "SQ" else channels["ALL"]
-        )
+        channel = ctx.guild.get_channel(channels[tier.upper()])
+
         start = sheet_start_rows[size]
 
         scores = []
-        if tier.upper() == "SQ":
-            scores = [int(score) for score in placements]
-            team_scores = [
-                sum(int(score) for score in placements[i:i + size])
-                for i in range(0, len(placements), size)
-            ]
+        scores = [int(score) for score in placements]
+        team_scores = [
+            sum(int(score) for score in placements[i:i + size])
+            for i in range(0, len(placements), size)
+        ]
 
-            sorted_team_scores = sorted(team_scores, reverse=True)
+        sorted_team_scores = sorted(team_scores, reverse=True)
 
-            team_placements = [
-                sorted_team_scores.index(score) + 1
-                for score in team_scores
-            ]
+        team_placements = [
+            sorted_team_scores.index(score) + 1
+            for score in team_scores
+        ]
 
-            # Sorted teams structure: [(placement, teamscore, index)]
-            sorted_teams = sorted(
-                zip(team_placements, team_scores, range(len(team_placements))),
-                key=lambda x: x[0]
+        # Sorted teams structure: [(placement, teamscore, index)]
+        sorted_teams = sorted(
+            zip(team_placements, team_scores, range(len(team_placements))),
+            key=lambda x: x[0]
+        )
+
+        # Placements structure for 6v6 example: [1, 2, 3, 4]
+        placements = [team[0] for team in sorted_teams]
+
+        sorted_names = []
+        sorted_scores = []
+        for _, _, team_index in sorted_teams:
+            team_start = team_index * size
+            team_end = team_start + size
+            sorted_names.extend(
+                names[team_start:team_end]
+            )
+            sorted_scores.extend(
+                scores[team_start:team_end]
             )
 
-            # Placements structure for 6v6 example: [1, 2, 3, 4]
-            placements = [team[0] for team in sorted_teams]
-
-            sorted_names = []
-            sorted_scores = []
-            for _, _, team_index in sorted_teams:
-                team_start = team_index * size
-                team_end = team_start + size
-                sorted_names.extend(
-                    names[team_start:team_end]
-                )
-                sorted_scores.extend(
-                    scores[team_start:team_end]
-                )
-
-            names = sorted_names
-            scores = sorted_scores
+        names = sorted_names
+        scores = sorted_scores
               
         updateCells = [{
             'range': f"{updateCols[0]}{start}:{updateCols[0]}{start+num_players-1}",
@@ -490,11 +538,11 @@ class Updating(commands.Cog):
         # The `placements` list in the DB is stored reversed relative to the
         # visual order. Reverse it here so images and placement history are
         # generated in ascending order (1 -> N).
-        try:
-            if tier.upper() != "SQ":
-                placements = list(placements)[::-1]
-        except Exception:
-            placements = placements
+        # try:
+        #     if tier.upper() != "SQ":
+        #         placements = list(placements)[::-1]
+        # except Exception:
+        #     placements = placements
         for i in range(num_players):
             # Sheet now handles Peak logic
             # if peakMMRs[i] == "N/A":
@@ -570,6 +618,7 @@ class Updating(commands.Cog):
             await msg.delete()
             raise
 
+        await self._write_score_history(sHistory, goodNames, scores, tableid)
         await pHistory.batch_update(updateCells)
         await msg.delete()
 
@@ -1014,9 +1063,8 @@ class Updating(commands.Cog):
         finally:
             if db: await db.close()
         
-        channel = ctx.guild.get_channel(
-            channels["SQ"] if tier.upper() == "SQ" else channels["ALL"]
-        )
+        channel = ctx.guild.get_channel(channels[tier.upper()])
+
         if channel:
             try:
                 reactMsg = await channel.fetch_message(messageid)
@@ -1136,9 +1184,7 @@ class Updating(commands.Cog):
                     return
 
                 # Step 3: Add reaction to the message
-                channel = ctx.guild.get_channel(
-                    channels["SQ"] if tier.upper() == "SQ" else channels["ALL"]
-                )
+                channel = ctx.guild.get_channel(channels[tier.upper()])
                 if channel:
                     try:
                         react_msg = await channel.fetch_message(messageid)
@@ -1254,9 +1300,7 @@ class Updating(commands.Cog):
         finally:
             if db: await db.close()
 
-        channel = ctx.guild.get_channel(
-            channels["SQ"] if tier.upper() == "SQ" else channels["ALL"]
-        )
+        channel = ctx.guild.get_channel(channels[tier.upper()])
         if channel:
             try:
                 # reactMsg = await channel.fetch_message(messageid)
@@ -1338,9 +1382,7 @@ class Updating(commands.Cog):
             await pHistory.batch_update(
                 [{'range': cell['range'], 'values': cell['values']} for cell in clearedCells]
             )
-            channel = ctx.guild.get_channel(
-                channels["SQ"] if tier.upper() == "SQ" else channels["ALL"]
-            )
+            channel = ctx.guild.get_channel(channels[tier.upper()])
             await c.execute("DELETE from updated WHERE tableid = ?", (idNum,))
             await db.commit()
             if channel:
@@ -1455,9 +1497,7 @@ class Updating(commands.Cog):
 
             await pHistory.batch_update(clear_payload)
             # Log to results channel
-            channel = ctx.guild.get_channel(
-                channels["SQ"] if tier.upper() == "SQ" else channels["ALL"]
-            )
+            channel = ctx.guild.get_channel(channels[tier.upper()])
             if channel:
                 le = discord.Embed(title="MMR Loss Reduction Applied", color=discord.Color.blue())
                 le.add_field(name="Table ID", value=str(idNum), inline=True)
