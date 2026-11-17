@@ -198,6 +198,26 @@ async def update_player_name_in_history(old_name: str, new_name: str) -> bool:
         return True
     except Exception:
         return False
+
+async def update_player_name_in_score_history(old_name: str, new_name: str) -> Optional[bool]:
+    """Rename a Score History entry, returning None when the player has no row."""
+    try:
+        agc = await agcm.authorize()
+        sh = await agc.open_by_key(SH_KEY)
+        ws = await sh.worksheet("Score History")
+        name_col = await ws.col_values(1)
+        old_name_key = old_name.strip().casefold()
+        row = next(
+            (i + 1 for i, value in enumerate(name_col)
+             if value and value.strip().casefold() == old_name_key),
+            None,
+        )
+        if row is None:
+            return None
+        await ws.update(f"A{row}", [[new_name]])
+        return True
+    except Exception:
+        return False
  
 def cooldown_remaining(last_date_str: str) -> Optional[int]:
     """
@@ -556,6 +576,8 @@ class NameChange(commands.Cog):
         sheet_ok = await update_player_name_in_history(old_name, new_name)
         if not sheet_ok:
             errors.append(f"Could not find **{old_name}** in Player History.")
+
+        score_history_ok = await update_player_name_in_score_history(old_name, new_name)
  
         if member is not None:
             try:
@@ -886,6 +908,8 @@ class NameChange(commands.Cog):
                 "The sheet was not modified.",
             ))
             return
+
+        score_history_ok = await update_player_name_in_score_history(old_name, new_name)
 
         member = find_member_for_name_change(ctx, old_name)
 
