@@ -275,9 +275,7 @@ class Updating(commands.Cog):
         self.bot = bot
         self.config = bot.config 
 
-    async def _write_score_history(self, score_sheet, player_names, scores, table_id):
-        if not table_id:
-            return
+    async def _write_score_history(self, score_sheet, player_names, scores):
         if len(player_names) != len(scores):
             raise ValueError("Player names and scores must have matching lengths.")
 
@@ -287,25 +285,9 @@ class Updating(commands.Cog):
             for row, name in enumerate(existing_names, start=1)
             if name and name.strip()
         }
-        headers = await score_sheet.row_values(1)
-        table_header = str(table_id)
-        score_column = next(
-            (
-                column
-                for column, value in enumerate(headers, start=1)
-                if column > 1 and str(value).strip() == table_header
-            ),
-            max(2, len(headers) + 1),
-        )
-
         updates = []
-        if score_column > len(headers):
-            updates.append({
-                "range": rowcol_to_a1(1, score_column),
-                "values": [[table_header]],
-            })
-
         next_row = len(existing_names) + 1
+        player_rows = []
         for player_name, score in zip(player_names, scores):
             row = rows_by_name.get(player_name.strip().casefold())
             if row is None:
@@ -316,6 +298,17 @@ class Updating(commands.Cog):
                     "range": rowcol_to_a1(row, 1),
                     "values": [[player_name]],
                 })
+
+            player_rows.append((row, score))
+
+        rows_to_read = list(dict.fromkeys(row for row, _ in player_rows))
+        row_values = await asyncio.gather(
+            *(score_sheet.row_values(row) for row in rows_to_read)
+        )
+        scores_by_row = dict(zip(rows_to_read, row_values))
+
+        for row, score in player_rows:
+            score_column = max(2, len(scores_by_row[row]) + 1)
             updates.append({
                 "range": rowcol_to_a1(row, score_column),
                 "values": [[score]],
@@ -618,7 +611,7 @@ class Updating(commands.Cog):
             await msg.delete()
             raise
 
-        await self._write_score_history(sHistory, goodNames, scores, tableid)
+        await self._write_score_history(sHistory, goodNames, scores)
         await pHistory.batch_update(updateCells)
         await msg.delete()
 
